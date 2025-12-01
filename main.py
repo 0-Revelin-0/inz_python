@@ -224,6 +224,7 @@ class GeneratorPage(ctk.CTkFrame):
         gen_button = ctk.CTkButton(self, text="Wygeneruj IR")
         gen_button.pack(pady=10, padx=20, anchor="w")
 
+
 class InputMonitor:
     def __init__(self, progress_bar, input_device_index: int, samplerate: int = 48000):
         self.progress_bar = progress_bar
