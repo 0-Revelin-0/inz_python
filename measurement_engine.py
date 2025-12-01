@@ -1,5 +1,5 @@
 # measurement_engine.py
-
+import queue
 import numpy as np
 import sounddevice as sd
 
@@ -51,29 +51,88 @@ def generate_inverse_filter(sweep, fs, f_start, f_end):
 
 def playrec_sweep(sweep, fs, audio_cfg, extra_silence=1.0):
     """
-    Odtwarza sweep na wyjściu i nagrywa na wejściu.
-    audio_cfg: dict z kluczami:
-        - input_device
-        - output_device
-        - sample_rate
-        - buffer_size
-    extra_silence: dodatkowy czas ciszy po sweepie [s],
-                   żeby odpowiedź pomieszczenia zdążyła wybrzmieć.
+    Odtwarza sweep na wyjściu i JEDNOCZEŚNIE nagrywa wejście,
+    używając osobnego OutputStream i InputStream (manualny full-duplex).
+
+    To omija problemy sd.playrec() z PaError -9998 ("Invalid number of channels")
+    na wielu sterownikach (Realtek, WASAPI itd.).
     """
     silence = np.zeros(int(fs * extra_silence), dtype=np.float32)
-    play_sig = np.concatenate([sweep, silence])
+    play_sig = np.concatenate([sweep, silence]).astype(np.float32)
 
-    rec = sd.playrec(
-        play_sig,
+    # Kolejka na zarejestrowane próbki z callbacku wejściowego
+    q = queue.Queue()
+
+    # --- CALLBACK WEJŚCIA ---
+    def input_callback(indata, frames, time, status):
+        if status:
+            print("Input status:", status)
+        q.put(indata.copy())
+
+    # --- CALLBACK WYJŚCIA ---
+    play_pos = 0
+
+    def output_callback(outdata, frames, time, status):
+        nonlocal play_pos
+        if status:
+            print("Output status:", status)
+
+        end = min(play_pos + frames, len(play_sig))
+        chunk = play_sig[play_pos:end]
+
+        # wypełnij to, co mamy
+        outdata[:, 0] = 0.0
+        outdata[:len(chunk), 0] = chunk
+        play_pos = end
+
+    # Tworzymy dwa osobne streamy
+    in_stream = sd.InputStream(
         samplerate=fs,
         channels=1,
-        device=(audio_cfg["output_device"], audio_cfg["input_device"]),
+        device=audio_cfg["input_device"],
         blocksize=audio_cfg["buffer_size"],
         dtype="float32",
+        callback=input_callback,
     )
-    sd.wait()
 
-    return rec[:, 0].copy()  # mono
+    out_stream = sd.OutputStream(
+        samplerate=fs,
+        channels=1,
+        device=audio_cfg["output_device"],
+        blocksize=audio_cfg["buffer_size"],
+        dtype="float32",
+        callback=output_callback,
+    )
+
+    # Startujemy oba
+    in_stream.start()
+    out_stream.start()
+
+    # Czekamy, aż cały sweep zostanie odtworzony
+    while True:
+        if play_pos >= len(play_sig):
+            break
+        sd.sleep(10)  # krótkie "drzemki", żeby nie blokować CPU
+
+    # Zatrzymujemy i zamykamy strumienie
+    out_stream.stop()
+    in_stream.stop()
+    out_stream.close()
+    in_stream.close()
+
+    # Zbieramy wszystko z kolejki
+    recorded_blocks = []
+    while not q.empty():
+        recorded_blocks.append(q.get())
+
+    if not recorded_blocks:
+        raise RuntimeError("Brak nagranego sygnału podczas pomiaru IR.")
+
+    recorded = np.concatenate(recorded_blocks, axis=0).flatten()
+
+    return recorded.copy()
+
+
 
 
 def deconvolve_ir(recorded, inverse_filter, fs, ir_length_s, fade_time_s):
@@ -94,6 +153,22 @@ def deconvolve_ir(recorded, inverse_filter, fs, ir_length_s, fade_time_s):
 
     ir_samples = int(ir_length_s * fs)
     ir = ir_full[:ir_samples]
+
+    # ================================
+    # 1. Przesunięcie impulsu do t=0
+    # ================================
+    peak = np.argmax(np.abs(ir))
+    ir = np.roll(ir, -peak)
+
+    # ================================
+    # 2. Usunięcie harmonicznych
+    # (zostawiamy tylko pierwsze 0.5 s IR)
+    # ================================
+    cut = int(0.5 * fs)
+    if cut < len(ir):
+        ir = ir[:cut]
+
+    ir_samples = len(ir)
 
     # fade na końcu IR
     fade_samples = int(fade_time_s * fs)
@@ -186,4 +261,5 @@ def measure_ir(params, audio_cfg):
 
     freqs, mag_db = compute_mag_response(ir, fs)
 
-    return ir, freqs, mag_db
+    return ir, freqs, mag_db, recorded
+

@@ -77,13 +77,13 @@ class MeasurementPage(ctk.CTkFrame):
         left.grid(row=0, column=0, padx=15, pady=15, sticky="ns")
 
         # ---------- Kalibracja SPL ----------
-        ctk.CTkLabel(left, text="Kalibracja SPL:", font=("Arial", 18, "bold")).pack(anchor="w", pady=(5, 2))
-        self.spl_label = ctk.CTkLabel(left, text="Poziom niezmierzony.",
-                                      font=("Arial", 14))
-        self.spl_label.pack(anchor="w", pady=(0, 10))
+        # ctk.CTkLabel(left, text="Kalibracja SPL:", font=("Arial", 18, "bold")).pack(anchor="w", pady=(5, 2))
+        # self.spl_label = ctk.CTkLabel(left, text="Poziom niezmierzony.",
+        #                               font=("Arial", 14))
+        # self.spl_label.pack(anchor="w", pady=(0, 10))
 
         ctk.CTkLabel(left, text="Kalibracja SPL", font=("Arial", 18, "bold")).pack(
-            anchor="w", pady=(10, 5)
+            anchor="n", pady=(10, 5)
         )
 
         self.pinknoise_button = ctk.CTkButton(
@@ -308,26 +308,36 @@ class MeasurementPage(ctk.CTkFrame):
         # 5. Worker w osobnym wątku (żeby nie blokować GUI)
         def worker():
             try:
+
                 self.after(0, lambda: self._update_progress(0.1))
-                ir, freqs, mag_db = measure_ir(params, audio_cfg)
+                ir, freqs, mag_db, recorded = measure_ir(params, audio_cfg)
                 self.after(0, lambda: self._update_progress(0.7))
                 fs = audio_cfg["sample_rate"]
 
-                # Zapis IR do WAV
                 timestamp = time.strftime("%Y%m%d_%H%M%S")
+
+                # zapis surowego nagrania sweepa
+                rec_filename = f"RECORDED_{timestamp}.wav"
+                rec_filepath = os.path.join(output_dir, rec_filename)
+                sf.write(rec_filepath, recorded, fs)
+
+                # Zapis IR do WAV
                 filename = f"IR_{int(start_f)}-{int(end_f)}Hz_{timestamp}.wav"
                 filepath = os.path.join(output_dir, filename)
 
                 sf.write(filepath, ir, fs)
                 self.after(0, lambda: self._update_progress(0.9))
 
+
             except Exception as e:
+
+                err_msg = f"Błąd podczas pomiaru:\n\n{e}"
+
                 # Aktualizacja GUI MUSI być przez self.after(...)
-                def on_error():
-                    show_error(f"Błąd podczas pomiaru:\n\n{e}")
+                def on_error(msg=err_msg):
+                    show_error(msg)
                     self.status_label.configure(text="Błąd pomiaru.")
                     self.start_button.configure(state="normal")
-
                 self.after(0, on_error)
                 return
 
@@ -540,7 +550,7 @@ def play_test_tone(output_device_index: int, samplerate: int = 48000, duration: 
     """Plays 1 kHz test sine wave."""
     def _worker():
         t = np.linspace(0, duration, int(duration * samplerate), endpoint=False)
-        tone = 0.2 * np.sin(2 * np.pi * 1000 * t)
+        tone = 0.1 * np.sin(2 * np.pi * 1000 * t)
         sd.play(tone, samplerate=samplerate, device=output_device_index)
         sd.wait()
 
@@ -574,53 +584,48 @@ class SettingsPage(ctk.CTkFrame):
         # TAB 1 — USTAWIENIA POMIARU (WSZYSTKO CO JUŻ MAMY)
         # ---------------------------------------------------------
         measure_tab = self.tabs.tab("Ustawienia pomiaru")
-        measure_tab.grid_columnconfigure(1, weight=1)
+        measure_tab.grid_columnconfigure(0, weight=1)
 
         frame = ctk.CTkFrame(measure_tab, corner_radius=12)
         frame.grid(row=0, column=0, padx=20, pady=20, sticky="nsew")
         frame.grid_columnconfigure(1, weight=1)
 
-        # ---------------- LISTA URZĄDZEŃ ----------------
-        ctk.CTkLabel(frame, text="Audio device:").grid(row=0, column=0, padx=10, pady=10, sticky="w")
-        self.device_combo = ctk.CTkComboBox(frame, values=[], command=self._on_device_change)
-        self.device_combo.grid(row=0, column=1, padx=10, pady=10, sticky="ew")
-
-        # Input channel
-        ctk.CTkLabel(frame, text="Input channel:").grid(row=1, column=0, padx=10, pady=10, sticky="w")
+        # ---------------- WEJŚCIA / WYJŚCIA ----------------
+        # Teraz NIE ma "Audio device" – od razu wybieramy konkretne wejście / wyjście
+        ctk.CTkLabel(frame, text="Input channel:").grid(row=0, column=0, padx=10, pady=10, sticky="w")
         self.input_combo = ctk.CTkComboBox(frame, values=[])
-        self.input_combo.grid(row=1, column=1, padx=10, pady=10, sticky="ew")
+        self.input_combo.grid(row=0, column=1, padx=10, pady=10, sticky="ew")
 
-        # Output channel
-        ctk.CTkLabel(frame, text="Output channel:").grid(row=2, column=0, padx=10, pady=10, sticky="w")
+        ctk.CTkLabel(frame, text="Output channel:").grid(row=1, column=0, padx=10, pady=10, sticky="w")
         self.output_combo = ctk.CTkComboBox(frame, values=[])
-        self.output_combo.grid(row=2, column=1, padx=10, pady=10, sticky="ew")
+        self.output_combo.grid(row=1, column=1, padx=10, pady=10, sticky="ew")
 
         # Sample rate
-        ctk.CTkLabel(frame, text="Sample rate:").grid(row=3, column=0, padx=10, pady=10, sticky="w")
+        ctk.CTkLabel(frame, text="Sample rate:").grid(row=2, column=0, padx=10, pady=10, sticky="w")
         self.sample_rate_combo = ctk.CTkComboBox(frame, values=["44100", "48000", "88200", "96000", "192000"])
         self.sample_rate_combo.set("48000")
-        self.sample_rate_combo.grid(row=3, column=1, padx=10, pady=10, sticky="ew")
+        self.sample_rate_combo.grid(row=2, column=1, padx=10, pady=10, sticky="ew")
 
         # Buffer size
-        ctk.CTkLabel(frame, text="Buffer size (frames):").grid(row=4, column=0, padx=10, pady=10, sticky="w")
+        ctk.CTkLabel(frame, text="Buffer size (frames):").grid(row=3, column=0, padx=10, pady=10, sticky="w")
         self.buffer_size_combo = ctk.CTkComboBox(frame, values=["64", "128", "256", "512", "1024"])
         self.buffer_size_combo.set("256")
-        self.buffer_size_combo.grid(row=4, column=1, padx=10, pady=10, sticky="ew")
+        self.buffer_size_combo.grid(row=3, column=1, padx=10, pady=10, sticky="ew")
 
         # Test tone
         self.test_btn = ctk.CTkButton(frame, text="Test tone (1 kHz)", command=self._play_test)
-        self.test_btn.grid(row=5, column=1, padx=10, pady=15, sticky="w")
+        self.test_btn.grid(row=4, column=1, padx=10, pady=15, sticky="w")
 
         # Input meter
-        ctk.CTkLabel(frame, text="Input level:").grid(row=6, column=0, padx=10, pady=10, sticky="w")
+        ctk.CTkLabel(frame, text="Input level:").grid(row=5, column=0, padx=10, pady=10, sticky="w")
         self.meter_bar = ctk.CTkProgressBar(frame, width=220)
-        self.meter_bar.grid(row=6, column=1, padx=10, pady=10, sticky="w")
+        self.meter_bar.grid(row=5, column=1, padx=10, pady=10, sticky="w")
         self.meter_bar.set(0)
 
         self.meter_btn = ctk.CTkButton(frame, text="Start input meter", command=self._toggle_meter)
-        self.meter_btn.grid(row=7, column=1, padx=10, pady=10, sticky="w")
+        self.meter_btn.grid(row=6, column=1, padx=10, pady=10, sticky="w")
 
-        # Load devices initially
+        # Załaduj listę wejść/wyjść
         self._load_devices()
 
         # ---------------------------------------------------------
@@ -650,41 +655,54 @@ class SettingsPage(ctk.CTkFrame):
                 pass
 
     def _load_devices(self):
+        """
+        Buduje płaskie listy:
+        - self.input_entries:  [{label, index}]
+        - self.output_entries: [{label, index}]
+        gdzie label = 'Input – xxx (Urządzenie)' / 'Output – yyy (Urządzenie)'.
+        """
         all_dev = sd.query_devices()
-        grouped = {}
 
         junk = ["mapper", "mapowanie", "default", "podstawowy", "smart sound", "microsoft"]
+
+        self.input_entries = []
+        self.output_entries = []
 
         for idx, dev in enumerate(all_dev):
             name = dev["name"]
 
+            # odfiltrowujemy śmieciowe urządzenia
             if any(j in name.lower() for j in junk):
                 continue
 
+            # Rozdzielamy: "Głośnik PC (Realtek HD Audio ...)" → label + base
             if "(" in name and ")" in name:
                 label = name[:name.rfind("(")].strip()
-                base = name[name.rfind("(")+1:name.rfind(")")].strip()
+                base = name[name.rfind("(") + 1:name.rfind(")")].strip()
             else:
-                base = name
                 label = name
+                base = name
 
-            if base not in grouped:
-                grouped[base] = {"name": base, "inputs": [], "outputs": []}
-
+            # Wejścia
             if dev["max_input_channels"] > 0:
-                grouped[base]["inputs"].append({"label": f"Input – {label}", "index": idx})
+                disp = f"Input – {label} ({base})"
+                self.input_entries.append({"label": disp, "index": idx})
+
+            # Wyjścia
             if dev["max_output_channels"] > 0:
-                grouped[base]["outputs"].append({"label": f"Output – {label}", "index": idx})
+                disp = f"Output – {label} ({base})"
+                self.output_entries.append({"label": disp, "index": idx})
 
-        self.audio_devices = list(grouped.values())
+        # Ustawiamy wartości w comboboxach
+        input_values = [e["label"] for e in self.input_entries] or ["Brak wejścia"]
+        output_values = [e["label"] for e in self.output_entries] or ["Brak wyjścia"]
 
-        dev_names = [d["name"] for d in self.audio_devices]
-        self.device_combo.configure(values=dev_names)
+        self.input_combo.configure(values=input_values)
+        self.output_combo.configure(values=output_values)
 
-        if dev_names:
-            self.device_combo.set(dev_names[0])
-            self._on_device_change(dev_names[0])
-
+        # Domyślny wybór
+        self.input_combo.set(input_values[0])
+        self.output_combo.set(output_values[0])
 
     def _on_device_change(self, device_name):
         dev = next((d for d in self.audio_devices if d["name"] == device_name), None)
@@ -738,28 +756,26 @@ class SettingsPage(ctk.CTkFrame):
     # =====================================================================
 
     def get_selected_input_index(self):
-        dev = next((d for d in self.audio_devices if d["name"] == self.device_combo.get()), None)
-        if not dev:
+        """Zwraca index urządzenia wejściowego wybranego w input_combo."""
+        if not hasattr(self, "input_entries"):
             return None
 
         selected = self.input_combo.get()
-        for i in dev["inputs"]:
-            if i["label"] == selected:
-                return i["index"]
+        for entry in self.input_entries:
+            if entry["label"] == selected:
+                return entry["index"]
         return None
 
     def get_selected_output_index(self):
-        dev = next((d for d in self.audio_devices if d["name"] == self.device_combo.get()), None)
-        if not dev:
+        """Zwraca index urządzenia wyjściowego wybranego w output_combo."""
+        if not hasattr(self, "output_entries"):
             return None
 
         selected = self.output_combo.get()
-        for o in dev["outputs"]:
-            if o["label"] == selected:
-                return o["index"]
+        for entry in self.output_entries:
+            if entry["label"] == selected:
+                return entry["index"]
         return None
-
-
 
 
 class AboutPage(ctk.CTkFrame):
