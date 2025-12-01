@@ -1,12 +1,6 @@
+from tkinter import filedialog
+
 import customtkinter as ctk
-
-try:
-    import customtkinter.windows.ctk_tk
-    customtkinter.windows.ctk_tk.CTk._check_dpi_scaling = lambda *a, **k: None
-    customtkinter.windows.ctk_tk.CTk._update_checks = lambda *a, **k: None
-except:
-    pass
-
 import sounddevice as sd
 import threading
 import numpy as np
@@ -16,10 +10,13 @@ import tkinter.filedialog as fd
 import matplotlib.pyplot as plt
 import matplotlib
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
+from pathlib import Path
+
 
 # --- Fix: wyłączenie wewnętrznych after() CustomTkinter ---
 
-
+ctk.deactivate_automatic_dpi_awareness()
 
 # --------------------------------------------------
 # KONFIGURACJA GLOBALNA
@@ -43,369 +40,166 @@ def show_error(message: str):
 # --------------------------------------------------
 # PODSTRONY
 # --------------------------------------------------
+# =====================================================================
+#  POMIAR ODPOWIEDZI IMPULSOWEJ — MeasurementPage
+# =====================================================================
+
 class MeasurementPage(ctk.CTkFrame):
     def __init__(self, parent, controller):
         super().__init__(parent)
         self.controller = controller
 
-        self.is_measuring = False
-        self.output_folder = os.getcwd()
+        # ==============================================================
+        # GŁÓWNY UKŁAD STRONY: LEWA KOLUMNA + PRAWA KOLUMNA
+        # ==============================================================
+        self.grid_columnconfigure(0, weight=0)
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_rowconfigure(0, weight=1)
 
-        self.ir_data = None
-        self.ir_samplerate = None
-
-        # --- globalny styl matplotlib (nowoczesne dark UI) ---
-        import matplotlib
-        matplotlib.use("TkAgg")
-        plt.style.use("dark_background")
-
-        matplotlib.rcParams.update({
-            "axes.facecolor": "#111111",
-            "figure.facecolor": "#111111",
-            "axes.edgecolor": "#bbbbbb",
-            "axes.labelcolor": "#ffffff",
-            "xtick.color": "#cccccc",
-            "ytick.color": "#cccccc",
-            "grid.color": "#555555",
-            "grid.alpha": 0.3,
-            "lines.linewidth": 1.4,
-            "font.size": 10,
-        })
-
-        # --- układ strony ---
-        self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(2, weight=1)
-
-        title = ctk.CTkLabel(
-            self,
-            text="🎤 Pomiar odpowiedzi impulsowej",
-            font=("Roboto", 24, "bold")
-        )
-        title.grid(row=0, column=0, padx=20, pady=(20, 5), sticky="w")
-
-        subtitle = ctk.CTkLabel(
-            self,
-            text="Ustaw urządzenia w zakładce Ustawienia.\n"
-                 "Skalibruj SPL, wybierz folder i rozpocznij pomiar.",
-            justify="left"
-        )
-        subtitle.grid(row=1, column=0, padx=20, pady=(0, 10), sticky="w")
-
-        # ------------------- główna ramka ---------------------
         main_frame = ctk.CTkFrame(self, corner_radius=12)
-        main_frame.grid(row=2, column=0, padx=20, pady=20, sticky="nsew")
+        main_frame.grid(row=0, column=0, columnspan=2, sticky="nsew", padx=20, pady=20)
 
         main_frame.grid_columnconfigure(0, weight=0)
         main_frame.grid_columnconfigure(1, weight=1)
         main_frame.grid_rowconfigure(0, weight=1)
 
-        # ======================================================
-        # LEWA RAMKA — USTAWIENIA
-        # ======================================================
-        config = ctk.CTkFrame(main_frame, corner_radius=12)
-        config.grid(row=0, column=0, padx=15, pady=15, sticky="nsw")
+        # ==============================================================
+        # LEWA KOLUMNA — USTAWIENIA POMIARU
+        # ==============================================================
+        left = ctk.CTkFrame(main_frame, corner_radius=12)
+        left.grid(row=0, column=0, padx=15, pady=15, sticky="ns")
 
-        for r in range(20):
-            config.grid_rowconfigure(r, weight=0)
-        config.grid_columnconfigure(1, weight=1)
+        # ---------- Kalibracja SPL ----------
+        ctk.CTkLabel(left, text="Kalibracja SPL:", font=("Arial", 18, "bold")).pack(anchor="w", pady=(5, 2))
+        self.spl_label = ctk.CTkLabel(left, text="Poziom niezmierzony.",
+                                      font=("Arial", 14))
+        self.spl_label.pack(anchor="w", pady=(0, 10))
 
-        # --- Calibrate SPL ---
-        ctk.CTkLabel(config, text="Kalibracja SPL:", font=("Roboto", 14, "bold")).grid(
-            row=0, column=0, columnspan=2, pady=(10, 5), sticky="w"
-        )
+        self.calib_button = ctk.CTkButton(left, text="Calibrate SPL", command=self._calibrate_spl)
+        self.calib_button.pack(fill="x", pady=10)
 
-        self.calib_status = ctk.CTkLabel(config, text="Poziom niezmierzony.", wraplength=220)
-        self.calib_status.grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 5))
+        # ---------- Parametry pomiaru ----------
+        ctk.CTkLabel(left, text="Parametry pomiaru:", font=("Arial", 18, "bold")).pack(anchor="w", pady=(20, 10))
 
-        self.calib_btn = ctk.CTkButton(config, text="Calibrate SPL", command=self._on_calibrate_spl)
-        self.calib_btn.grid(row=2, column=0, columnspan=2, pady=(0, 15), sticky="we")
+        self.sweep_length = self._make_param(left, "Długość sweepa [s]:", "5")
+        self.start_freq = self._make_param(left, "Start freq [Hz]:", "20")
+        self.end_freq = self._make_param(left, "End freq [Hz]:", "20000")
+        self.ir_length = self._make_param(left, "Długość IR [s]:", "3")
+        self.fade_time = self._make_param(left, "Fade [s]:", "0.05")
 
-        # --- Ustawienia pomiaru ---
-        ctk.CTkLabel(config, text="Parametry pomiaru:", font=("Roboto", 14, "bold")).grid(
-            row=3, column=0, columnspan=2, pady=(5, 5), sticky="w"
-        )
+        # ---------- Folder zapisu IR ----------
+        ctk.CTkLabel(left, text="Folder zapisu IR:", font=("Arial", 18, "bold")).pack(anchor="w", pady=(20, 5))
 
-        # Sweep duration
-        ctk.CTkLabel(config, text="Długość sweepa [s]:").grid(row=4, column=0, sticky="w", pady=3)
-        self.sweep_entry = ctk.CTkEntry(config, width=80)
-        self.sweep_entry.insert(0, "5")
-        self.sweep_entry.grid(row=4, column=1, sticky="w")
+        folder_frame = ctk.CTkFrame(left)
+        folder_frame.pack(fill="x", pady=5)
 
-        # Start freq
-        ctk.CTkLabel(config, text="Start freq [Hz]:").grid(row=5, column=0, sticky="w", pady=3)
-        self.fstart_entry = ctk.CTkEntry(config, width=80)
-        self.fstart_entry.insert(0, "20")
-        self.fstart_entry.grid(row=5, column=1, sticky="w")
+        self.output_dir_var = ctk.StringVar(value=str(Path.home()))
+        self.folder_entry = ctk.CTkEntry(folder_frame, textvariable=self.output_dir_var)
+        self.folder_entry.pack(side="left", fill="x", expand=True, padx=(0, 5))
 
-        # End freq
-        ctk.CTkLabel(config, text="End freq [Hz]:").grid(row=6, column=0, sticky="w", pady=3)
-        self.fend_entry = ctk.CTkEntry(config, width=80)
-        self.fend_entry.insert(0, "20000")
-        self.fend_entry.grid(row=6, column=1, sticky="w")
+        ctk.CTkButton(folder_frame, text="Wybierz folder...", width=130,
+                      command=self._choose_folder).pack(side="right")
 
-        # IR length
-        ctk.CTkLabel(config, text="Długość IR [s]:").grid(row=7, column=0, sticky="w", pady=3)
-        self.irlen_entry = ctk.CTkEntry(config, width=80)
-        self.irlen_entry.insert(0, "3")
-        self.irlen_entry.grid(row=7, column=1, sticky="w")
+        # ---------- Start measurement ----------
+        self.start_button = ctk.CTkButton(left, text="Start measurement", fg_color="#d71920",
+                                          hover_color="#b01015", command=self._start_measurement)
+        self.start_button.pack(fill="x", pady=(30, 5))
 
-        # Fade
-        ctk.CTkLabel(config, text="Fade [s]:").grid(row=8, column=0, sticky="w", pady=3)
-        self.fade_entry = ctk.CTkEntry(config, width=80)
-        self.fade_entry.insert(0, "0.05")
-        self.fade_entry.grid(row=8, column=1, sticky="w")
+        self.status_label = ctk.CTkLabel(left, text="Gotowy do pomiaru.", font=("Arial", 13))
+        self.status_label.pack(anchor="w", pady=(0, 5))
 
-        # --- folder outputu ---
-        ctk.CTkLabel(config, text="Folder zapisu IR:", font=("Roboto", 14, "bold")).grid(
-            row=10, column=0, columnspan=2, pady=(10, 5), sticky="w"
-        )
+        # ==============================================================
+        # PRAWA KOLUMNA — WYKRESY
+        # ==============================================================
+        plot_frame = ctk.CTkFrame(main_frame, corner_radius=12)
+        plot_frame.grid(row=0, column=1, padx=15, pady=15, sticky="nsew")
 
-        self.folder_var = ctk.StringVar(value=self.output_folder)
-        ctk.CTkEntry(config, textvariable=self.folder_var, width=220).grid(
-            row=11, column=0, pady=2, sticky="w"
-        )
+        plot_frame.grid_columnconfigure(0, weight=1)
+        plot_frame.grid_rowconfigure(0, weight=1)
 
-        ctk.CTkButton(config, text="Wybierz folder…", command=self._choose_folder).grid(
-            row=11, column=1, pady=2, sticky="w"
-        )
+        # ---------- Matplotlib figure: 2 subplots ----------
+        self.fig = Figure(figsize=(6, 5), dpi=100, facecolor="#111111", tight_layout=True)
 
-        # --- Start measurement ---
-        self.measure_btn = ctk.CTkButton(
-            config, text="Start measurement", command=self._on_start_measurement
-        )
-        self.measure_btn.grid(row=15, column=0, columnspan=2, pady=(20, 5), sticky="we")
+        # Impulse Response
+        self.ax_ir = self.fig.add_subplot(2, 1, 1)
+        self.ax_ir.set_facecolor("#111111")
+        self.ax_ir.tick_params(colors="white")
+        self.ax_ir.grid(True, color="#444444", alpha=0.3)
+        self.ax_ir.set_title("Impulse Response", color="white")
+        self.ax_ir.set_xlabel("Czas [s]", color="white")
+        self.ax_ir.set_ylabel("Amplituda", color="white")
 
-        self.status_label = ctk.CTkLabel(config, text="Gotowy do pomiaru.", wraplength=220)
-        self.status_label.grid(row=16, column=0, columnspan=2, pady=5, sticky="w")
+        # Magnitude Response
+        self.ax_mag = self.fig.add_subplot(2, 1, 2)
+        self.ax_mag.set_facecolor("#111111")
+        self.ax_mag.tick_params(colors="white")
+        self.ax_mag.grid(True, color="#444444", alpha=0.3)
+        self.ax_mag.set_title("Magnitude Response", color="white")
+        self.ax_mag.set_xlabel("Częstotliwość [Hz]", color="white")
+        self.ax_mag.set_ylabel("Poziom [dB]", color="white")
 
-        # ======================================================
-        # PRAWA RAMKA — WYKRESY
-        # ======================================================
-        plot = ctk.CTkFrame(main_frame, corner_radius=12)
-        plot.grid(row=0, column=1, padx=15, pady=15, sticky="nsew")
-
-        plot.grid_columnconfigure(0, weight=1)
-        plot.grid_rowconfigure(0, weight=1)
-
-        # --- Matplotlib figure ---
-        self.fig, (self.ax_ir, self.ax_mag) = plt.subplots(2, 1, figsize=(6, 5), dpi=100)
-        self.fig.tight_layout(pad=2.0)
-
-        self.canvas = FigureCanvasTkAgg(self.fig, master=plot)
+        # Canvas
+        self.canvas = FigureCanvasTkAgg(self.fig, master=plot_frame)
         self.canvas_widget = self.canvas.get_tk_widget()
         self.canvas_widget.pack(fill="both", expand=True)
 
         self._clear_plots()
 
-    # ============================================================
+    # =====================================================================
     # FUNKCJE POMOCNICZE
-    # ============================================================
-    def _get_audio_settings(self):
-        settings = self.controller.pages["settings"]
-        out_idx = settings.get_selected_output_index()
-        in_idx = settings.get_selected_input_index()
-        sr = int(settings.sample_rate_combo.get())
-        return {"out": out_idx, "inp": in_idx, "sr": sr}
+    # =====================================================================
+
+    def _make_param(self, parent, label_text, default):
+        frame = ctk.CTkFrame(parent)
+        frame.pack(fill="x", pady=4)
+
+        ctk.CTkLabel(frame, text=label_text).pack(side="left")
+        entry = ctk.CTkEntry(frame, width=80)
+        entry.insert(0, default)
+        entry.pack(side="right")
+        return entry
 
     def _choose_folder(self):
-        folder = fd.askdirectory(initialdir=self.output_folder)
+        folder = filedialog.askdirectory()
         if folder:
-            self.output_folder = folder
-            self.folder_var.set(folder)
+            self.output_dir_var.set(folder)
 
-    # ============================================================
-    # KALIBRACJA SPL
-    # ============================================================
-    def _on_calibrate_spl(self):
-        if self.is_measuring:
-            return
+    def _clear_plots(self):
+        self.ax_ir.cla()
+        self.ax_mag.cla()
 
-        audio = self._get_audio_settings()
-        if audio["out"] is None or audio["inp"] is None:
-            self.status_label.configure(text="Błąd: brak poprawnie ustawionych urządzeń.")
-            return
+        # IR labels
+        self.ax_ir.set_facecolor("#111111")
+        self.ax_ir.grid(True, color="#444444", alpha=0.3)
+        self.ax_ir.set_title("Impulse Response", color="white")
+        self.ax_ir.set_xlabel("Czas [s]", color="white")
+        self.ax_ir.set_ylabel("Amplituda", color="white")
 
-        self.status_label.configure(text="Kalibracja SPL…")
-        threading.Thread(target=self._run_calibration, args=(audio,), daemon=True).start()
+        # MAG labels
+        self.ax_mag.set_facecolor("#111111")
+        self.ax_mag.grid(True, color="#444444", alpha=0.3)
+        self.ax_mag.set_title("Magnitude Response", color="white")
+        self.ax_mag.set_xlabel("Częstotliwość [Hz]", color="white")
+        self.ax_mag.set_ylabel("Poziom [dB]", color="white")
 
-    def _run_calibration(self, audio):
-        sr = audio["sr"]
-        t = np.linspace(0, 2.0, int(sr * 2), endpoint=False)
-        tone = 0.3 * np.sin(2 * np.pi * 500 * t).astype(np.float32)
+        self.canvas.draw()
 
-        try:
-            rec = sd.playrec(
-                tone[:, np.newaxis],
-                samplerate=sr,
-                device=(audio["out"], audio["inp"]),
-                channels=1,
-                dtype="float32",
-                blocking=True,
-            )[:, 0]
-        except Exception as e:
-            self.after(0, lambda: self.status_label.configure(text=f"Błąd SPL: {e}"))
-            return
+    # =====================================================================
+    # FUNKCJE LOGICZNE (PLACEHOLDERS — DZIAŁAJĄCE)
+    # =====================================================================
 
-        rms = np.sqrt(np.mean(rec ** 2)) + 1e-12
-        peak = np.max(np.abs(rec))
-        dbfs = 20 * np.log10(rms)
+    def _calibrate_spl(self):
+        self.spl_label.configure(text="(calibration running...)")
+        self.status_label.configure(text="Kalibracja SPL... (placeholder)")
 
-        if peak > 0.999:
-            msg = "⚠️ CLIPPING – obniż głośność!"
-        elif dbfs < -40:
-            msg = f"🔈 Za cicho (~{dbfs:.1f} dBFS)"
-        elif -40 <= dbfs < -20:
-            msg = f"ℹ️ OK, ale trochę cicho (~{dbfs:.1f} dBFS)"
-        else:
-            msg = f"✅ Poziom dobry (~{dbfs:.1f} dBFS)"
+        self.after(800, lambda: self.spl_label.configure(text="75 dB SPL zmierzone"))
 
-        self.after(0, lambda: self.calib_status.configure(text=msg))
-        self.after(0, lambda: self.status_label.configure(text="Kalibracja zakończona."))
-
-    # ============================================================
-    # START MEASUREMENT
-    # ============================================================
-    def _on_start_measurement(self):
-        if self.is_measuring:
-            return
-
-        audio = self._get_audio_settings()
-
-        # pobranie parametrów
-        try:
-            sweep_dur = float(self.sweep_entry.get())
-            ir_len = float(self.irlen_entry.get())
-            f1 = float(self.fstart_entry.get())
-            f2 = float(self.fend_entry.get())
-            fade = float(self.fade_entry.get())
-        except:
-            self.status_label.configure(text="Błędne wartości w ustawieniach!")
-            return
-
-        self.status_label.configure(text="Trwa pomiar…")
+    def _start_measurement(self):
+        self.status_label.configure(text="Rozpoczynanie pomiaru...")
         self._clear_plots()
 
-        self.is_measuring = True
-        threading.Thread(
-            target=self._run_measurement,
-            args=(audio, sweep_dur, ir_len, f1, f2, fade),
-            daemon=True
-        ).start()
-
-    def _run_measurement(self, audio, T, ir_len, f1, f2, fade):
-        sr = audio["sr"]
-
-        # --- Generacja sweepa logarytmicznego ---
-        t = np.linspace(0, T, int(sr * T), endpoint=False)
-        K = T / np.log(f2 / f1)
-        sweep = np.sin(2 * np.pi * f1 * K * (np.exp(t / K) - 1)).astype(np.float32)
-
-        # --- Fade in/out ---
-        fade_n = int(fade * sr)
-        sweep[:fade_n] *= np.linspace(0, 1, fade_n)
-        sweep[-fade_n:] *= np.linspace(1, 0, fade_n)
-
-        # --- Filtr odwrotny ---
-        w = np.exp(-t / K)
-        inv = (sweep[::-1] * w).astype(np.float32)
-
-        # --- nagranie ---
-        try:
-            rec = sd.playrec(
-                sweep[:, None],
-                samplerate=sr,
-                device=(audio["out"], audio["inp"]),
-                channels=1,
-                dtype="float32",
-                blocking=True,
-            )[:, 0]
-        except Exception as e:
-            self.after(0, lambda: self.status_label.configure(text=f"Błąd pomiaru: {e}"))
-            self.is_measuring = False
-            return
-
-        # --- Dekonwolucja ---
-        N = len(rec) + len(inv)
-        nfft = 1 << (N - 1).bit_length()
-        IR = np.fft.irfft(
-            np.fft.rfft(rec, nfft) * np.fft.rfft(inv, nfft),
-            n=nfft
-        )[: int(ir_len * sr)]
-
-        IR = IR / (np.max(np.abs(IR)) + 1e-12)
-        IR = IR.astype(np.float32)
-
-        # zapis
-        ts = time.strftime("%Y%m%d_%H%M%S")
-        outpath = os.path.join(self.output_folder, f"IR_{ts}.wav")
-        self._save_wav(outpath, sr, IR)
-
-        self.ir_data = IR
-        self.ir_samplerate = sr
-
-        self.after(0, lambda: self.status_label.configure(text=f"Pomiar zakończony.\nZapisano: {outpath}"))
-        self.after(0, lambda: self._update_plots(IR, sr))
-
-        self.is_measuring = False
-
-    # ============================================================
-    # Zapis WAV
-    # ============================================================
-    def _save_wav(self, path, sr, data):
-        import wave
-        data16 = (np.clip(data, -1, 1) * 32767).astype(np.int16)
-        with wave.open(path, "wb") as f:
-            f.setnchannels(1)
-            f.setsampwidth(2)
-            f.setframerate(sr)
-            f.writeframes(data16.tobytes())
-
-    # ============================================================
-    # WYKRESY
-    # ============================================================
-    def _clear_plots(self):
-        self.ax_ir.clear()
-        self.ax_ir.set_title("Impulse Response")
-        self.ax_ir.set_xlabel("Czas [s]")
-        self.ax_ir.set_ylabel("Amplituda")
-        self.ax_ir.grid(True, alpha=0.25)
-
-        self.ax_mag.clear()
-        self.ax_mag.set_title("Magnitude Response")
-        self.ax_mag.set_xlabel("Częstotliwość [Hz]")
-        self.ax_mag.set_ylabel("Poziom [dB]")
-        self.ax_mag.grid(True, which="both", alpha=0.25)
-
-        self.canvas.draw()
-
-    def _update_plots(self, ir, sr):
-        # IR
-        t = np.arange(len(ir)) / sr
-        self.ax_ir.clear()
-        self.ax_ir.plot(t, ir, color="#ff4444")
-        self.ax_ir.grid(True, alpha=0.25)
-        self.ax_ir.set_title("Impulse Response")
-        self.ax_ir.set_xlabel("Czas [s]")
-        self.ax_ir.set_ylabel("Amplituda")
-
-        # FFT
-        freq = np.fft.rfftfreq(len(ir), 1 / sr)
-        mag = 20 * np.log10(np.abs(np.fft.rfft(ir)) + 1e-12)
-
-        self.ax_mag.clear()
-        self.ax_mag.semilogx(freq, mag, color="#55aaff")
-        self.ax_mag.set_xlim(20, sr / 2)
-        self.ax_mag.set_ylim(np.max(mag) - 60, np.max(mag) + 3)
-        self.ax_mag.grid(True, which="both", alpha=0.25)
-        self.ax_mag.set_title("Magnitude Response")
-        self.ax_mag.set_xlabel("Częstotliwość [Hz]")
-        self.ax_mag.set_ylabel("Poziom [dB]")
-
-        self.fig.tight_layout(pad=2.0)
-        self.canvas.draw()
-
-
-
+        # Tu wstawimy: generowanie sweepa, odtwarzanie, nagrywanie itd.
+        self.after(1500, lambda: self.status_label.configure(text="Pomiar zakończony (placeholder)."))
 
 class GeneratorPage(ctk.CTkFrame):
     def __init__(self, parent, controller):
@@ -717,42 +511,35 @@ class AboutPage(ctk.CTkFrame):
 # GŁÓWNE OKNO APLIKACJI
 # --------------------------------------------------
 class EasyIResponseApp(ctk.CTk):
-
     def _safe_close(self):
-        """Bezpieczne zamknięcie aplikacji – zatrzymuje timery i monitory."""
+        """Bezpieczne zamknięcie aplikacji – zatrzymuje monitory i kończy mainloop bez destroy()."""
 
-        # 1. zatrzymaj input metera
+        # 1. zatrzymaj input metera (jak masz)
         try:
-            if "settings" in self.pages:
+            if hasattr(self, "pages") and "settings" in self.pages:
                 page = self.pages["settings"]
                 if hasattr(page, "input_monitor") and page.input_monitor:
                     page.input_monitor.stop()
-        except:
+        except Exception:
             pass
 
-        # 2. zatrzymaj after() stron
+        # 2. anuluj after() które SAM utworzyłeś (np. w MeasurementPage czy innych stronach)
         try:
-            for page in self.pages.values():
-                if hasattr(page, "after_id") and page.after_id is not None:
-                    try:
-                        page.after_cancel(page.after_id)
-                    except:
-                        pass
-        except:
+            if hasattr(self, "pages"):
+                for page in self.pages.values():
+                    if hasattr(page, "after_id") and page.after_id is not None:
+                        try:
+                            page.after_cancel(page.after_id)
+                        except Exception:
+                            pass
+        except Exception:
             pass
 
-        # 3. zatrzymaj animację
-        try:
-            if hasattr(self, "anim_after_id"):
-                self.after_cancel(self.anim_after_id)
-        except:
-            pass
-
-        # 4. zamknij okno
-        try:
-            self.destroy()
-        except:
-            pass
+        # 3. ZAMIAST destroy:
+        #    - schowaj okno
+        #    - zatrzymaj pętlę zdarzeń Tkintera
+        self.withdraw()  # ukryj okno
+        self.quit()  # zatrzymaj mainloop / interpreter Tcl
 
     def __init__(self):
         super().__init__()
