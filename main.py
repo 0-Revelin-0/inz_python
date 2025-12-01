@@ -13,6 +13,11 @@ from matplotlib.figure import Figure
 from pathlib import Path
 import soundfile as sf
 import webbrowser
+from matplotlib.ticker import LogLocator, StrMethodFormatter
+from matplotlib.ticker import ScalarFormatter
+from matplotlib.ticker import ScalarFormatter
+
+
 
 #---------- Integracja między plikami ----------
 from measurement_engine import measure_ir
@@ -56,6 +61,11 @@ class MeasurementPage(ctk.CTkFrame):
     def __init__(self, parent, controller):
         super().__init__(parent)
         self.controller = controller
+
+        self.last_ir = None
+        self.last_freqs = None
+        self.last_mag = None
+        self.last_fs = None
 
         # ==============================================================
         # GŁÓWNY UKŁAD STRONY: LEWA KOLUMNA + PRAWA KOLUMNA
@@ -197,6 +207,95 @@ class MeasurementPage(ctk.CTkFrame):
 
         self._clear_plots()
 
+    def update_plots(self):
+        """Aktualizuje wykresy bazując na ostatnim pomiarze."""
+
+        if self.last_ir is None:
+            return  # nie ma danych
+
+        ir = self.last_ir
+        freqs = self.last_freqs
+        mag_db = self.last_mag
+        fs = self.last_fs
+
+        # --- IR ---
+        self.ax_ir.cla()
+        self.ax_ir.set_facecolor("#111111")
+        self.ax_ir.grid(True, color="#444444", alpha=0.3)
+        self.ax_ir.set_title("Impulse Response", color="white")
+        self.ax_ir.set_xlabel("Czas [s]", color="white")
+        self.ax_ir.set_ylabel("Amplituda", color="white")
+
+        ir_full = self.last_ir
+        fs = self.last_fs
+
+        # 1) Szukamy największego piku IR
+        peak_idx = np.argmax(np.abs(ir_full))
+
+        # 2) Ile przed i po piku chcemy pokazać na wykresie
+        pre_ms = 50  # 50 ms przed pikiem
+        post_ms = self.controller.get_ir_window_ms()  # dynamiczne z ustawień
+
+        pre_samples = int((pre_ms / 1000.0) * fs)
+        post_samples = int((post_ms / 1000.0) * fs)
+
+        start = max(0, peak_idx - pre_samples)
+        end = min(len(ir_full), peak_idx + post_samples)
+
+        ir_segment = ir_full[start:end]
+
+        # 3) Downsampling TYLKO do rysowania, żeby GUI było płynne
+        MAX_PLOT_POINTS = 20000
+        if len(ir_segment) > MAX_PLOT_POINTS:
+            factor = len(ir_segment) // MAX_PLOT_POINTS
+            ir_plot = ir_segment[::factor]
+            t = np.arange(len(ir_plot)) * (factor / fs)
+        else:
+            ir_plot = ir_segment
+            t = np.arange(len(ir_plot)) / fs
+
+        # 4) Rysowanie IR
+        self.ax_ir.plot(t, ir_plot, linewidth=0.9, color="#4fc3f7")
+
+        # --- MAGNITUDE ---
+        self.ax_mag.cla()
+        self.ax_mag.set_facecolor("#111111")
+        self.ax_mag.grid(True, color="#444444", alpha=0.3)
+        self.ax_mag.set_title("Magnitude Response", color="white")
+        self.ax_mag.set_xlabel("Częstotliwość [Hz]", color="white")
+        self.ax_mag.set_ylabel("Poziom [dB]", color="white")
+
+        smoothing = self.controller.get_smoothing_fraction()
+
+        try:
+            from measurement_engine import smooth_mag_response
+            if smoothing is None:
+                mag_plot = mag_db
+            else:
+                mag_plot = smooth_mag_response(freqs, mag_db, fraction=smoothing)
+        except:
+            mag_plot = mag_db
+
+        self.ax_mag.semilogx(freqs, mag_plot, linewidth=1.5, color="#0096FF")
+
+        # LOGARYTMICZNE ODSTĘPY JAK W REW / SMAART
+        self.ax_mag.xaxis.set_major_locator(LogLocator(base=10.0))
+        self.ax_mag.xaxis.set_minor_locator(LogLocator(base=10.0, subs=np.arange(2, 10)))
+
+        #self.ax_mag.xaxis.set_major_formatter(StrMethodFormatter('{x:.0f}'))
+        formatter = ScalarFormatter()
+        formatter.set_scientific(False)
+        self.ax_mag.xaxis.set_major_formatter(formatter)
+
+        try:
+            start_f = float(self.start_freq.get())
+            end_f = float(self.end_freq.get())
+            self.ax_mag.set_xlim(start_f * 0.9, end_f * 1.1)
+        except:
+            pass
+
+        self.canvas.draw()
+
     # =====================================================================
     # FUNKCJE POMOCNICZE
     # =====================================================================
@@ -229,22 +328,41 @@ class MeasurementPage(ctk.CTkFrame):
             self.output_dir_var.set(folder)
 
     def _clear_plots(self):
+        # --- Clear IR plot ---
         self.ax_ir.cla()
-        self.ax_mag.cla()
-
-        # IR labels
         self.ax_ir.set_facecolor("#111111")
         self.ax_ir.grid(True, color="#444444", alpha=0.3)
         self.ax_ir.set_title("Impulse Response", color="white")
         self.ax_ir.set_xlabel("Czas [s]", color="white")
         self.ax_ir.set_ylabel("Amplituda", color="white")
 
-        # MAG labels
+        # --- Clear Magnitude plot ---
+        self.ax_mag.cla()
         self.ax_mag.set_facecolor("#111111")
         self.ax_mag.grid(True, color="#444444", alpha=0.3)
         self.ax_mag.set_title("Magnitude Response", color="white")
         self.ax_mag.set_xlabel("Częstotliwość [Hz]", color="white")
         self.ax_mag.set_ylabel("Poziom [dB]", color="white")
+
+        # Ustawiamy skalę logarytmiczną JUŻ NA STARCIE
+        self.ax_mag.set_xscale("log")
+
+        # TICKI LOGARYTMICZNE
+
+        # Major ticks: 100 Hz, 1000 Hz, 10000 Hz
+        self.ax_mag.xaxis.set_major_locator(LogLocator(base=10.0))
+
+        # Minor ticks w log10 (2..9: 200,300,...,900)
+        self.ax_mag.xaxis.set_minor_locator(LogLocator(base=10.0, subs=np.arange(2, 10)))
+
+        # Formatter liczb (np. '100', '1000', '10000')
+        formatter = ScalarFormatter()
+        formatter.set_scientific(False)
+        formatter.set_useOffset(False)
+        self.ax_mag.xaxis.set_major_formatter(formatter)
+
+        # Domyślny zakres
+        self.ax_mag.set_xlim(100, 10000)
 
         self.canvas.draw()
 
@@ -334,6 +452,11 @@ class MeasurementPage(ctk.CTkFrame):
 
                 self.after(0, lambda: self._update_progress(0.2))
                 ir, freqs, mag_db, recorded = measure_ir(params, audio_cfg)
+                self.last_ir = ir
+                self.last_freqs = freqs
+                self.last_mag = mag_db
+                self.last_fs = audio_cfg["sample_rate"]
+
                 self.after(0, lambda: self._update_progress(0.4))
                 fs = audio_cfg["sample_rate"]
 
@@ -367,37 +490,84 @@ class MeasurementPage(ctk.CTkFrame):
                 return
 
             # Funkcja do aktualizacji wykresów w wątku GUI
-            def update_plots():
-                # --- IR ---
-                self.ax_ir.cla()
-                self.ax_ir.set_facecolor("#111111")
-                self.ax_ir.grid(True, color="#444444", alpha=0.3)
-                self.ax_ir.set_title("Impulse Response", color="white")
-                self.ax_ir.set_xlabel("Czas [s]", color="white")
-                self.ax_ir.set_ylabel("Amplituda", color="white")
-
-                t = np.arange(len(ir)) / fs
-                self.ax_ir.plot(t, ir, linewidth=0.9)
-
-                # --- Magnitude ---
-                self.ax_mag.cla()
-                self.ax_mag.set_facecolor("#111111")
-                self.ax_mag.grid(True, color="#444444", alpha=0.3)
-                self.ax_mag.set_title("Magnitude Response", color="white")
-                self.ax_mag.set_xlabel("Częstotliwość [Hz]", color="white")
-                self.ax_mag.set_ylabel("Poziom [dB]", color="white")
-
-                self.ax_mag.semilogx(freqs, mag_db, linewidth=0.9)
-
-                self.canvas.draw()
-
-                self.status_label.configure(
-                    text=f"Pomiar zakończony. Zapisano plik:\n{filename}"
-                )
-                self.start_button.configure(state="normal")
+            # def update_plots():
+            #     # --- IR ---
+            #     self.ax_ir.cla()
+            #     self.ax_ir.set_facecolor("#111111")
+            #     self.ax_ir.grid(True, color="#444444", alpha=0.3)
+            #     self.ax_ir.set_title("Impulse Response", color="white")
+            #     self.ax_ir.set_xlabel("Czas [s]", color="white")
+            #     self.ax_ir.set_ylabel("Amplituda", color="white")
+            #
+            #     t = np.arange(len(ir)) / fs
+            #     self.ax_ir.plot(t, ir, linewidth=0.9)
+            #
+            #     # --- Magnitude ---
+            #     self.ax_mag.cla()
+            #     self.ax_mag.set_facecolor("#111111")
+            #     self.ax_mag.grid(True, color="#444444", alpha=0.3)
+            #     self.ax_mag.set_title("Magnitude Response", color="white")
+            #     self.ax_mag.set_xlabel("Częstotliwość [Hz]", color="white")
+            #     self.ax_mag.set_ylabel("Poziom [dB]", color="white")
+            #
+            #     # --- SMOOTHING 1/6 OCTAVE ---
+            #     try:
+            #         from measurement_engine import smooth_mag_response
+            #         mag_smooth = smooth_mag_response(freqs, mag_db, fraction=6)
+            #     except Exception:
+            #         mag_smooth = mag_db  # fallback
+            #
+            #     # --- RYSUJEMY WYGŁADZONY WYKRES ---
+            #     # --- Dynamic smoothing ---
+            #     smoothing = self.controller.get_smoothing_fraction()
+            #
+            #     try:
+            #         from measurement_engine import smooth_mag_response
+            #         if smoothing is None:  # raw
+            #             mag_plot = mag_db
+            #         else:
+            #             mag_plot = smooth_mag_response(freqs, mag_db, fraction=smoothing)
+            #     except Exception:
+            #         mag_plot = mag_db
+            #
+            #     # Rysowanie
+            #     self.ax_mag.semilogx(freqs, mag_plot, linewidth=1.5, color="#0096FF")
+            #
+            #     # Zakres częstotliwości dopasowany do sweepa
+            #     try:
+            #         start_f = float(self.start_freq.get())
+            #         end_f = float(self.end_freq.get())
+            #         self.ax_mag.set_xlim(start_f * 0.9, end_f * 1.1)
+            #     except:
+            #         pass
+            #
+            #     # --- ZAKRES CZĘSTOTLIWOŚCI (dostosowanie do sweep) ---
+            #     start_f = self.controller.pages["measurement"].start_freq.get()
+            #     end_f = self.controller.pages["measurement"].end_freq.get()
+            #
+            #     try:
+            #         start_f = float(start_f)
+            #         end_f = float(end_f)
+            #         self.ax_mag.set_xlim(start_f * 0.85, end_f * 1.15)
+            #     except:
+            #         pass
+            #
+            #     self.canvas.draw()
+            #
+            #     self.status_label.configure(
+            #         text=f"Pomiar zakończony. Zapisano plik:\n{filename}"
+            #     )
+            #     self.start_button.configure(state="normal")
 
             self.after(0, lambda: self._update_progress(1.0))
-            self.after(0, update_plots)
+            self.after(0, self.update_plots)
+
+            # >>> DODAJ TO <<<
+            self.after(0, lambda: self.status_label.configure(
+                text=f"Pomiar zakończony. Zapisano plik:\n{filename}"
+            ))
+            self.after(0, lambda: self.start_button.configure(state="normal"))
+
 
 
         threading.Thread(target=worker, daemon=True).start()
@@ -585,6 +755,9 @@ def play_test_tone(output_device_index: int, samplerate: int = 48000, duration: 
 
 class SettingsPage(ctk.CTkFrame):
     def __init__(self, parent, controller):
+
+        self._ir_window_after_id = None
+
         super().__init__(parent)
         self.controller = controller
 
@@ -637,18 +810,43 @@ class SettingsPage(ctk.CTkFrame):
         self.buffer_size_combo.set("256")
         self.buffer_size_combo.grid(row=3, column=1, padx=10, pady=10, sticky="ew")
 
-        # Test tone
-        self.test_btn = ctk.CTkButton(frame, text="Test tone (1 kHz)", command=self._play_test)
-        self.test_btn.grid(row=4, column=1, padx=10, pady=15, sticky="w")
+        # Smoothing
+        ctk.CTkLabel(frame, text="Smoothing (Magnitude):").grid(
+            row=4, column=0, padx=10, pady=10, sticky="w"
+        )
+
+        self.smoothing_combo = ctk.CTkComboBox(
+            frame,
+            values=["Raw", "1/24 octave", "1/12 octave", "1/6 octave", "1/3 octave"],
+            command=self._on_smoothing_change  # <-- dynamiczne odświeżanie wykresu
+        )
+        self.smoothing_combo.set("1/6 octave")
+        self.smoothing_combo.grid(row=4, column=1, padx=10, pady=10, sticky="ew")
+
+        # IR window after peak (ms)
+        ctk.CTkLabel(frame, text="IR window after peak [ms]:").grid(
+            row=5, column=0, padx=10, pady=10, sticky="w"
+        )
+
+        self.ir_window_entry = ctk.CTkEntry(frame, width=120)
+        self.ir_window_entry.grid(row=5, column=1, padx=10, pady=10, sticky="ew")
+        self.ir_window_entry.insert(0, "500")  # domyślnie 500 ms
+
+        # dynamiczne odświeżanie wykresu przy zmianie wartości
+        self.ir_window_entry.bind("<KeyRelease>", self._on_ir_window_change)
 
         # Input meter
-        ctk.CTkLabel(frame, text="Input level:").grid(row=5, column=0, padx=10, pady=10, sticky="w")
+        ctk.CTkLabel(frame, text="Input level:").grid(row=6, column=0, padx=10, pady=10, sticky="w")
         self.meter_bar = ctk.CTkProgressBar(frame, width=220)
-        self.meter_bar.grid(row=5, column=1, padx=10, pady=10, sticky="w")
+        self.meter_bar.grid(row=6, column=1, padx=10, pady=10, sticky="w")
         self.meter_bar.set(0)
 
         self.meter_btn = ctk.CTkButton(frame, text="Start input meter", command=self._toggle_meter)
-        self.meter_btn.grid(row=6, column=1, padx=10, pady=10, sticky="w")
+        self.meter_btn.grid(row=7, column=1, padx=10, pady=10, sticky="w")
+
+        # Test tone
+        self.test_btn = ctk.CTkButton(frame, text="Test tone (1 kHz)", command=self._play_test)
+        self.test_btn.grid(row=8, column=1, padx=10, pady=15, sticky="w")
 
         # Załaduj listę wejść/wyjść
         self._load_devices()
@@ -801,6 +999,67 @@ class SettingsPage(ctk.CTkFrame):
             if entry["label"] == selected:
                 return entry["index"]
         return None
+
+    def _on_smoothing_change(self, value):
+        # Dynamiczne przerysowanie wykresu Magnitude
+        try:
+            measurement_page = self.controller.pages["measurement"]
+            measurement_page.update_plots()
+        except:
+            pass
+
+    def get_smoothing_fraction(self):
+        v = self.smoothing_combo.get()
+
+        if v == "Raw":
+            return None
+        if "1/24" in v:
+            return 24
+        if "1/12" in v:
+            return 12
+        if "1/6" in v:
+            return 6
+        if "1/3" in v:
+            return 3
+
+        return None
+
+    def _on_ir_window_change(self, event=None):
+        if hasattr(self, "_ir_window_after_id") and self._ir_window_after_id is not None:
+            try:
+                self.after_cancel(self._ir_window_after_id)
+            except:
+                pass
+
+        # start debounce (300 ms)
+        self._ir_window_after_id = self.after(300, self._apply_ir_window_change)
+
+    def _apply_ir_window_change(self):
+        try:
+            val = int(self.ir_window_entry.get())
+            if val <= 0:
+                return
+        except ValueError:
+            return
+
+        try:
+            measurement_page = self.controller.pages["measurement"]
+            measurement_page.update_plots()
+        except Exception:
+            pass
+        if self.ir_window_entry.get().strip() == "":
+            return
+
+    def get_ir_window_ms(self):
+        """Zwraca okno IR po piku w ms (z pola w ustawieniach)."""
+        try:
+            val = int(self.ir_window_entry.get())
+            if val <= 0:
+                return 500
+            return val
+        except Exception:
+            return 500
+
 
 
 class AboutPage(ctk.CTkFrame):
@@ -984,6 +1243,16 @@ class AboutPage(ctk.CTkFrame):
 # GŁÓWNE OKNO APLIKACJI
 # --------------------------------------------------
 class EasyIResponseApp(ctk.CTk):
+
+    def get_smoothing_fraction(self):
+        settings_page = self.pages["settings"]
+        return settings_page.get_smoothing_fraction()
+
+    def get_ir_window_ms(self):
+        settings_page = self.pages["settings"]
+        return settings_page.get_ir_window_ms()
+
+
     def _safe_close(self):
         """Bezpieczne zamknięcie aplikacji – zatrzymuje monitory i kończy mainloop bez destroy()."""
 

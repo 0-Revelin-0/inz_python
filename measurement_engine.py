@@ -160,13 +160,16 @@ def deconvolve_ir(recorded, inverse_filter, fs, ir_length_s, fade_time_s):
     peak = np.argmax(np.abs(ir))
     ir = np.roll(ir, -peak)
 
+    # --- Auto trimming IR ---
+    # ir = trim_ir(ir, fs, pre_ms=50, post_ms=100, tail_drop_db=60)
+
     # ================================
     # 2. Usunięcie harmonicznych
     # (zostawiamy tylko pierwsze 0.5 s IR)
     # ================================
-    cut = int(0.5 * fs)
-    if cut < len(ir):
-        ir = ir[:cut]
+    # cut = int(0.5 * fs)
+    # if cut < len(ir):
+    #     ir = ir[:cut]
 
     ir_samples = len(ir)
 
@@ -183,6 +186,43 @@ def deconvolve_ir(recorded, inverse_filter, fs, ir_length_s, fade_time_s):
     ir = ir / max_val
 
     return ir.astype(np.float32)
+
+def trim_ir(ir, fs, pre_ms=50, post_ms=300, tail_drop_db=60):
+    """
+    Automatyczne przycinanie IR:
+      - pre_ms: ile ms zostawić PRZED głównym pikiem
+      - post_ms: ile ms zostawić PO końcu ogona (wykrytego po spadku tail_drop_db)
+    """
+
+    ir = np.asarray(ir)
+    n = len(ir)
+
+    # 1) znajdź pik (direct sound)
+    peak_idx = np.argmax(np.abs(ir))
+
+    # przelicz ms na próbki
+    pre_samp = int((pre_ms / 1000) * fs)
+    post_samp = int((post_ms / 1000) * fs)
+
+    # 2) początek IR = 50 ms przed pikiem
+    start = max(0, peak_idx - pre_samp)
+
+    # 3) znajdź punkt w którym IR spadło np. o 60 dB
+    peak_val = np.max(np.abs(ir))
+    threshold = peak_val * 10**(-tail_drop_db / 20)
+
+    # idziemy od końca aż IR > próg
+    end_idx = n - 1
+    for i in range(n - 1, peak_idx, -1):
+        if abs(ir[i]) > threshold:
+            end_idx = i
+            break
+
+    # 4) koniec IR = 300 ms po końcu ogona
+    end = min(n, end_idx + post_samp)
+
+    return ir[start:end]
+
 
 
 def compute_mag_response(ir, fs):
@@ -201,6 +241,27 @@ def compute_mag_response(ir, fs):
     mag_db = 20.0 * np.log10(np.maximum(np.abs(F), 1e-12))
 
     return freqs, mag_db
+
+
+# def smooth_mag_response(freqs, mag_db, fraction=6):
+#     """
+#     Fractional-octave smoothing — domyślnie 1/6 oktawy.
+#     """
+#     smoothed = np.zeros_like(mag_db)
+#     for i, f in enumerate(freqs):
+#         if f <= 0:
+#             smoothed[i] = mag_db[i]
+#             continue
+#
+#         # szerokość okna w oktawach
+#         f_low = f / (2 ** (1/(2*fraction)))
+#         f_high = f * (2 ** (1/(2*fraction)))
+#
+#         idx = np.where((freqs >= f_low) & (freqs <= f_high))[0]
+#         smoothed[i] = np.mean(mag_db[idx])
+#
+#
+#     return smoothed
 
 
 def measure_ir(params, audio_cfg):
@@ -263,4 +324,50 @@ def measure_ir(params, audio_cfg):
     freqs, mag_db = compute_mag_response(ir, fs)
 
     return ir, freqs, mag_db, recorded
+
+
+def smooth_mag_response(freqs, mag_db, fraction=6):
+    """
+    Fractional-octave smoothing – szybka implementacja O(N)
+    z oknem szerokości 1/fraction oktawy w skali log2(f).
+    """
+    freqs = np.asarray(freqs)
+    mag_db = np.asarray(mag_db)
+    smoothed = np.empty_like(mag_db)
+
+    n = len(freqs)
+    if n == 0:
+        return smoothed
+
+    # logarytm częstotliwości (log2, bo wygodnie w oktawach)
+    logf = np.log2(np.maximum(freqs, 1e-12))
+    half = 1.0 / (2.0 * fraction)  # połowa szerokości okna w oktawach
+
+    left = 0
+    right = 0
+
+    for i in range(n):
+        f = freqs[i]
+        if f <= 0:
+            smoothed[i] = mag_db[i]
+            continue
+
+        center = logf[i]
+        low = center - half
+        high = center + half
+
+        # przesuwamy lewy wskaźnik, aż wejdziemy w okno
+        while left < n and logf[left] < low:
+            left += 1
+        # przesuwamy prawy wskaźnik, dopóki jesteśmy w oknie
+        while right < n and logf[right] <= high:
+            right += 1
+
+        if right > left:
+            smoothed[i] = mag_db[left:right].mean()
+        else:
+            smoothed[i] = mag_db[i]
+
+    return smoothed
+
 
