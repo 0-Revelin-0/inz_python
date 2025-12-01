@@ -364,6 +364,7 @@ class MeasurementPage(ctk.CTkFrame):
             self.after(0, lambda: self._update_progress(1.0))
             self.after(0, update_plots)
 
+
         threading.Thread(target=worker, daemon=True).start()
 
     # def _start_pink_noise(self):

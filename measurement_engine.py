@@ -4,6 +4,7 @@ import numpy as np
 import sounddevice as sd
 
 
+
 def generate_exponential_sweep(fs, duration, f_start, f_end):
     """
     Eksponencjalny sine sweep wg Fariny.

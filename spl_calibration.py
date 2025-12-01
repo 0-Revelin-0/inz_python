@@ -4,6 +4,7 @@ import numpy as np
 import sounddevice as sd
 import threading
 
+
 # =============================================================
 # 1. GENERACJA RÓŻOWEGO SZUMU (Pink Noise)
 # =============================================================
