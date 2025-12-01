@@ -1,5 +1,4 @@
 from tkinter import filedialog
-
 import customtkinter as ctk
 import sounddevice as sd
 import threading
@@ -12,9 +11,16 @@ import matplotlib
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 from pathlib import Path
+import soundfile as sf
+
+#---------- Integracja między plikami ----------
+from measurement_engine import measure_ir
+from spl_calibration import PinkNoisePlayer, measure_input_level, InputLevelMonitor
 
 
-# --- Fix: wyłączenie wewnętrznych after() CustomTkinter ---
+
+
+# --- Wyłączenie wewnętrznych after() CustomTkinter ---
 
 ctk.deactivate_automatic_dpi_awareness()
 
@@ -36,6 +42,7 @@ def show_error(message: str):
 
     btn = ctk.CTkButton(dlg, text="OK", command=dlg.destroy)
     btn.pack(pady=10)
+
 
 # --------------------------------------------------
 # PODSTRONY
@@ -75,8 +82,25 @@ class MeasurementPage(ctk.CTkFrame):
                                       font=("Arial", 14))
         self.spl_label.pack(anchor="w", pady=(0, 10))
 
-        self.calib_button = ctk.CTkButton(left, text="Calibrate SPL", command=self._calibrate_spl)
-        self.calib_button.pack(fill="x", pady=10)
+        ctk.CTkLabel(left, text="Kalibracja SPL", font=("Arial", 18, "bold")).pack(
+            anchor="w", pady=(10, 5)
+        )
+
+        self.pinknoise_button = ctk.CTkButton(
+            left,
+            text="Start Pink Noise",
+            command=self._toggle_pink_noise
+        )
+        self.pinknoise_button.pack(fill="x", pady=(5, 10))
+
+        self.calib_status_label = ctk.CTkLabel(
+            left,
+            text="Brak pomiaru",
+            text_color="#888888",
+            anchor="center",
+            justify="center",
+        )
+        self.calib_status_label.pack(fill="x", pady=(5, 5))
 
         # ---------- Parametry pomiaru ----------
         ctk.CTkLabel(left, text="Parametry pomiaru:", font=("Arial", 18, "bold")).pack(anchor="w", pady=(20, 10))
@@ -105,8 +129,24 @@ class MeasurementPage(ctk.CTkFrame):
                                           hover_color="#b01015", command=self._start_measurement)
         self.start_button.pack(fill="x", pady=(30, 5))
 
-        self.status_label = ctk.CTkLabel(left, text="Gotowy do pomiaru.", font=("Arial", 13))
-        self.status_label.pack(anchor="w", pady=(0, 5))
+        # Pasek postępu pomiaru IR
+        self.progress_bar = ctk.CTkProgressBar(left, height=12)
+        self.progress_bar.set(0)
+        self.progress_bar.pack(fill="x", pady=(0, 15))
+
+        # --- Dolny pasek statusu (footer) ---
+        self.footer = ctk.CTkFrame(self, fg_color="transparent")
+        self.footer.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(20, 10))
+
+        self.status_label = ctk.CTkLabel(
+            self.footer,
+            text="",
+            font=("Arial", 16),
+            text_color="white",
+            anchor="center",
+            justify="center"
+        )
+        self.status_label.pack(fill="x", pady=(5, 5))
 
         # ==============================================================
         # PRAWA KOLUMNA — WYKRESY
@@ -148,6 +188,18 @@ class MeasurementPage(ctk.CTkFrame):
     # =====================================================================
     # FUNKCJE POMOCNICZE
     # =====================================================================
+    def _toggle_pink_noise(self):
+        # jeśli pink noise jest włączony → wyłącz
+        if hasattr(self, "pinknoise_running") and self.pinknoise_running:
+            self._stop_pink_noise()
+            self.pinknoise_running = False
+            self.pinknoise_button.configure(text="Start Pink Noise")
+            return
+
+        # jeśli pink noise jest wyłączony → włącz
+        self._start_pink_noise()
+        self.pinknoise_running = True
+        self.pinknoise_button.configure(text="Stop Pink Noise")
 
     def _make_param(self, parent, label_text, default):
         frame = ctk.CTkFrame(parent)
@@ -184,22 +236,231 @@ class MeasurementPage(ctk.CTkFrame):
 
         self.canvas.draw()
 
+    def _update_progress(self, value: float):
+        """Ustawia pasek postępu 0.0–1.0"""
+        try:
+            self.progress_bar.set(value)
+            self.progress_bar.update_idletasks()
+        except:
+            pass
+
     # =====================================================================
     # FUNKCJE LOGICZNE (PLACEHOLDERS — DZIAŁAJĄCE)
     # =====================================================================
 
-    def _calibrate_spl(self):
-        self.spl_label.configure(text="(calibration running...)")
-        self.status_label.configure(text="Kalibracja SPL... (placeholder)")
-
-        self.after(800, lambda: self.spl_label.configure(text="75 dB SPL zmierzone"))
+    # def _calibrate_spl(self):
+    #     self.spl_label.configure(text="(calibration running...)")
+    #     self.status_label.configure(text="Kalibracja SPL... (placeholder)")
+    #
+    #     self.after(800, lambda: self.spl_label.configure(text="75 dB SPL zmierzone"))
 
     def _start_measurement(self):
-        self.status_label.configure(text="Rozpoczynanie pomiaru...")
-        self._clear_plots()
+        """Start pomiaru IR – wywołuje measurement_engine w osobnym wątku."""
+        # Na wszelki wypadek zatrzymujemy kalibrację SPL (pink noise + monitor)
+        try:
+            self._stop_pink_noise()
+        except Exception:
+            pass
+        """Start pomiaru IR – wywołuje measurement_engine w osobnym wątku."""
+        # 1. Parsowanie parametrów z panelu po lewej
+        try:
+            sweep_len = float(self.sweep_length.get())
+            start_f = float(self.start_freq.get())
+            end_f = float(self.end_freq.get())
+            ir_len = float(self.ir_length.get())
+            fade = float(self.fade_time.get())
+        except ValueError:
+            show_error("Błędne parametry pomiaru.\nSprawdź, czy wszystkie pola są liczbami.")
+            return
 
-        # Tu wstawimy: generowanie sweepa, odtwarzanie, nagrywanie itd.
-        self.after(1500, lambda: self.status_label.configure(text="Pomiar zakończony (placeholder)."))
+        # sanity check
+        if end_f <= start_f:
+            show_error("End freq musi być większe niż Start freq.")
+            return
+
+        # 2. Folder wyjściowy
+        output_dir = self.output_dir_var.get()
+        if not os.path.isdir(output_dir):
+            show_error("Wybrany folder zapisu IR nie istnieje.")
+            return
+
+        # 3. Konfiguracja audio z SettingsPage
+        audio_cfg = self.controller.get_measurement_audio_config()
+        if audio_cfg is None:
+            show_error("Najpierw skonfiguruj poprawnie urządzenia audio w zakładce 'Ustawienia'.")
+            return
+
+        params = {
+            "sweep_length": sweep_len,
+            "start_freq": start_f,
+            "end_freq": end_f,
+            "ir_length": ir_len,
+            "fade_time": fade,
+        }
+
+        # 4. UI: czyścimy wykresy, blokujemy przycisk
+        self._clear_plots()
+        self.status_label.configure(text="Trwa pomiar IR...")
+        self.start_button.configure(state="disabled")
+
+        self._update_progress(0.0)
+
+        # 5. Worker w osobnym wątku (żeby nie blokować GUI)
+        def worker():
+            try:
+                self.after(0, lambda: self._update_progress(0.1))
+                ir, freqs, mag_db = measure_ir(params, audio_cfg)
+                self.after(0, lambda: self._update_progress(0.7))
+                fs = audio_cfg["sample_rate"]
+
+                # Zapis IR do WAV
+                timestamp = time.strftime("%Y%m%d_%H%M%S")
+                filename = f"IR_{int(start_f)}-{int(end_f)}Hz_{timestamp}.wav"
+                filepath = os.path.join(output_dir, filename)
+
+                sf.write(filepath, ir, fs)
+                self.after(0, lambda: self._update_progress(0.9))
+
+            except Exception as e:
+                # Aktualizacja GUI MUSI być przez self.after(...)
+                def on_error():
+                    show_error(f"Błąd podczas pomiaru:\n\n{e}")
+                    self.status_label.configure(text="Błąd pomiaru.")
+                    self.start_button.configure(state="normal")
+
+                self.after(0, on_error)
+                return
+
+            # Funkcja do aktualizacji wykresów w wątku GUI
+            def update_plots():
+                # --- IR ---
+                self.ax_ir.cla()
+                self.ax_ir.set_facecolor("#111111")
+                self.ax_ir.grid(True, color="#444444", alpha=0.3)
+                self.ax_ir.set_title("Impulse Response", color="white")
+                self.ax_ir.set_xlabel("Czas [s]", color="white")
+                self.ax_ir.set_ylabel("Amplituda", color="white")
+
+                t = np.arange(len(ir)) / fs
+                self.ax_ir.plot(t, ir, linewidth=0.9)
+
+                # --- Magnitude ---
+                self.ax_mag.cla()
+                self.ax_mag.set_facecolor("#111111")
+                self.ax_mag.grid(True, color="#444444", alpha=0.3)
+                self.ax_mag.set_title("Magnitude Response", color="white")
+                self.ax_mag.set_xlabel("Częstotliwość [Hz]", color="white")
+                self.ax_mag.set_ylabel("Poziom [dB]", color="white")
+
+                self.ax_mag.semilogx(freqs, mag_db, linewidth=0.9)
+
+                self.canvas.draw()
+
+                self.status_label.configure(
+                    text=f"Pomiar zakończony. Zapisano plik:\n{filename}"
+                )
+                self.start_button.configure(state="normal")
+
+            self.after(0, lambda: self._update_progress(1.0))
+            self.after(0, update_plots)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    # def _start_pink_noise(self):
+    #     audio_cfg = self.controller.get_measurement_audio_config()
+    #     if audio_cfg is None:
+    #         show_error("Skonfiguruj urządzenia audio w Ustawieniach.")
+    #         return
+    #
+    #     if not hasattr(self, "pink_player"):
+    #         self.pink_player = PinkNoisePlayer()
+    #
+    #     self.pink_player.start(audio_cfg)
+    #     self.calib_status_label.configure(text="Kalibracja…", text_color="#cccccc")
+    #
+    #     self._poll_input_level()
+
+    def _stop_pink_noise(self):
+        if hasattr(self, "pink_player"):
+            self.pink_player.stop()
+
+        if hasattr(self, "input_level_monitor"):
+            self.input_level_monitor.stop()
+
+        self.calib_status_label.configure(text="Zatrzymano szum", text_color="#888888")
+
+    def _start_pink_noise(self):
+        settings_page = self.controller.pages["settings"]
+        if hasattr(settings_page, "stop_input_monitor"):
+            settings_page.stop_input_monitor()
+
+        audio_cfg = self.controller.get_measurement_audio_config()
+        if audio_cfg is None:
+            show_error("Skonfiguruj urządzenia audio w Ustawieniach.")
+            return
+
+        # Pink Noise
+        if not hasattr(self, "pink_player"):
+            self.pink_player = PinkNoisePlayer()
+
+        self.pink_player.start(audio_cfg)
+        self.calib_status_label.configure(text="Kalibracja…", text_color="#cccccc")
+
+        # --- START CIĄGŁEGO MONITORA WEJŚCIA ---
+
+        def update_level(rms_db, peak_db):
+            # ta funkcja jest wywoływana w wątku audio → opakowujemy ją w after()
+            def do_update():
+                if peak_db > -1:
+                    txt = f"Peak {peak_db:.1f} dBFS — ZA GŁOŚNO!"
+                    color = "#ff4444"
+                elif rms_db < -40:
+                    txt = f"RMS {rms_db:.1f} dBFS — Za cicho"
+                    color = "#ffaa00"
+                elif rms_db > -8:
+                    txt = f"RMS {rms_db:.1f} dBFS — Może być za głośno"
+                    color = "#ff8800"
+                else:
+                    txt = f"RMS {rms_db:.1f} dBFS — OK"
+                    color = "#44cc44"
+
+                self.calib_status_label.configure(text=txt, text_color=color)
+
+            # zlecenie aktualizacji w głównym wątku Tkintera
+            self.after(0, do_update)
+
+        self.input_level_monitor = InputLevelMonitor(audio_cfg, update_level)
+        self.input_level_monitor.start()
+
+    # def _poll_input_level(self):
+    #     if not hasattr(self, "pink_player"):
+    #         return
+    #     if not self.pink_player.running:
+    #         return
+    #
+    #     audio_cfg = self.controller.get_measurement_audio_config()
+    #     result = measure_input_level(audio_cfg, duration=0.2)
+    #
+    #     rms_db = result["rms_db"]
+    #     peak_db = result["peak_db"]
+    #
+    #     if peak_db > -1:
+    #         txt = f"Peak {peak_db:.1f} dBFS — ZA GŁOŚNO!"
+    #         color = "#ff4444"
+    #     elif rms_db < -40:
+    #         txt = f"RMS {rms_db:.1f} dBFS — Za cicho"
+    #         color = "#ffaa00"
+    #     elif rms_db > -8:
+    #         txt = f"RMS {rms_db:.1f} dBFS — Może być za głośno"
+    #         color = "#ff8800"
+    #     else:
+    #         txt = f"RMS {rms_db:.1f} dBFS — OK"
+    #         color = "#44cc44"
+    #
+    #     self.calib_status_label.configure(text=txt, text_color=color)
+    #     self.after(300, self._poll_input_level)
+
+
 
 class GeneratorPage(ctk.CTkFrame):
     def __init__(self, parent, controller):
@@ -245,7 +506,12 @@ class InputMonitor:
                 return
             rms = float(np.sqrt(np.mean(indata ** 2)))
             level = min(rms * 8, 1.0)
-            self.progress_bar.set(level)
+
+            # Aktualizacja paska w wątku GUI
+            def do_update(lvl=level):
+                self.progress_bar.set(lvl)
+
+            self.progress_bar.after(0, do_update)
 
         try:
             self.stream = sd.InputStream(
@@ -373,6 +639,14 @@ class SettingsPage(ctk.CTkFrame):
     # =====================================================================
     # --- DEVICE HANDLING (jak wcześniej) ---
     # =====================================================================
+
+    def stop_input_monitor(self):
+        """Bezpieczne zatrzymanie miernika wejścia."""
+        if hasattr(self, "input_monitor") and self.input_monitor is not None:
+            try:
+                self.input_monitor.stop()
+            except:
+                pass
 
     def _load_devices(self):
         all_dev = sd.query_devices()
@@ -548,7 +822,7 @@ class EasyIResponseApp(ctk.CTk):
 
         # Okno
         self.title("Easy IResponse")
-        self.geometry("1100x650")
+        self.geometry("1200x800")
         self.minsize(900, 550)
 
         # Grid główny
@@ -661,6 +935,37 @@ class EasyIResponseApp(ctk.CTk):
             page.place(relx=0, rely=0, relwidth=1, relheight=1)
             page.place_forget()
 
+    def get_measurement_audio_config(self):
+        """
+        Zwraca słownik z ustawieniami audio dla pomiaru IR
+        na podstawie zakładki 'Ustawienia pomiaru'.
+        """
+        settings_page: SettingsPage = self.pages["settings"]
+
+        in_idx = settings_page.get_selected_input_index()
+        out_idx = settings_page.get_selected_output_index()
+
+        if in_idx is None or out_idx is None:
+            return None
+
+        # sample rate
+        try:
+            sr = int(settings_page.sample_rate_combo.get())
+        except ValueError:
+            sr = 48000
+
+        # buffer size
+        try:
+            buf = int(settings_page.buffer_size_combo.get())
+        except ValueError:
+            buf = 256
+
+        return {
+            "input_device": in_idx,
+            "output_device": out_idx,
+            "sample_rate": sr,
+            "buffer_size": buf,
+        }
     # ---------------- LOGIKA STRON + ANIMACJA ----------------
     def set_active_page(self, name: str, animate: bool = True):
         if name not in self.pages:
