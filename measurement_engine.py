@@ -251,6 +251,7 @@ def measure_ir(params, audio_cfg):
         extra_silence=params["ir_length"]
     )
 
+
     ir = deconvolve_ir(
         recorded,
         inv,

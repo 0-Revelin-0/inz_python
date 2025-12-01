@@ -135,6 +135,7 @@ class MeasurementPage(ctk.CTkFrame):
         self.progress_bar.set(0)
         self.progress_bar.pack(fill="x", pady=(40, 20))
 
+
         self.status_label = ctk.CTkLabel(
             left,
             text="Status pomiaru",
