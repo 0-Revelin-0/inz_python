@@ -12,6 +12,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 from pathlib import Path
 import soundfile as sf
+import webbrowser
 
 #---------- Integracja między plikami ----------
 from measurement_engine import measure_ir
@@ -106,9 +107,9 @@ class MeasurementPage(ctk.CTkFrame):
         ctk.CTkLabel(left, text="Parametry pomiaru:", font=("Arial", 18, "bold")).pack(anchor="w", pady=(20, 10))
 
         self.sweep_length = self._make_param(left, "Długość sweepa [s]:", "5")
-        self.start_freq = self._make_param(left, "Start freq [Hz]:", "20")
-        self.end_freq = self._make_param(left, "End freq [Hz]:", "20000")
-        self.ir_length = self._make_param(left, "Długość IR [s]:", "3")
+        self.start_freq = self._make_param(left, "Start freq [Hz]:", "100")
+        self.end_freq = self._make_param(left, "End freq [Hz]:", "10000")
+        self.ir_length = self._make_param(left, "Długość IR [s]:", "8")
         self.fade_time = self._make_param(left, "Fade [s]:", "0.05")
 
         # ---------- Folder zapisu IR ----------
@@ -132,21 +133,31 @@ class MeasurementPage(ctk.CTkFrame):
         # Pasek postępu pomiaru IR
         self.progress_bar = ctk.CTkProgressBar(left, height=12)
         self.progress_bar.set(0)
-        self.progress_bar.pack(fill="x", pady=(0, 15))
-
-        # --- Dolny pasek statusu (footer) ---
-        self.footer = ctk.CTkFrame(self, fg_color="transparent")
-        self.footer.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(20, 10))
+        self.progress_bar.pack(fill="x", pady=(40, 20))
 
         self.status_label = ctk.CTkLabel(
-            self.footer,
-            text="",
-            font=("Arial", 16),
+            left,
+            text="Status pomiaru",
+            font=("Arial", 14),
             text_color="white",
-            anchor="center",
+            anchor="n",
             justify="center"
         )
-        self.status_label.pack(fill="x", pady=(5, 5))
+        self.status_label.pack(fill="x", pady=(40, 20))
+
+        # # --- Dolny pasek statusu (footer) ---
+        # self.footer = ctk.CTkFrame(self, fg_color="transparent")
+        # self.footer.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(20, 10))
+        #
+        # self.status_label = ctk.CTkLabel(
+        #     self.footer,
+        #     text="",
+        #     font=("Arial", 16),
+        #     text_color="white",
+        #     anchor="center",
+        #     justify="center"
+        # )
+        # self.status_label.pack(fill="x", pady=(5, 5))
 
         # ==============================================================
         # PRAWA KOLUMNA — WYKRESY
@@ -273,6 +284,17 @@ class MeasurementPage(ctk.CTkFrame):
             show_error("Błędne parametry pomiaru.\nSprawdź, czy wszystkie pola są liczbami.")
             return
 
+        # Zabezpieczenie: IR nie krótsza niż sweep
+        if ir_len < sweep_len:
+            ir_len = sweep_len
+            # poprawiamy wartość w polu tekstowym, żeby user widział co się stało
+            self.ir_length.delete(0, "end")
+            self.ir_length.insert(0, str(sweep_len))
+            self.status_label.configure(
+                text="Długość IR była krótsza niż sweep.\nUstawiono IR = długość sweepa."
+            )
+
+
         # sanity check
         if end_f <= start_f:
             show_error("End freq musi być większe niż Start freq.")
@@ -309,9 +331,9 @@ class MeasurementPage(ctk.CTkFrame):
         def worker():
             try:
 
-                self.after(0, lambda: self._update_progress(0.1))
+                self.after(0, lambda: self._update_progress(0.2))
                 ir, freqs, mag_db, recorded = measure_ir(params, audio_cfg)
-                self.after(0, lambda: self._update_progress(0.7))
+                self.after(0, lambda: self._update_progress(0.4))
                 fs = audio_cfg["sample_rate"]
 
                 timestamp = time.strftime("%Y%m%d_%H%M%S")
@@ -321,12 +343,14 @@ class MeasurementPage(ctk.CTkFrame):
                 rec_filepath = os.path.join(output_dir, rec_filename)
                 sf.write(rec_filepath, recorded, fs)
 
+                self.after(0, lambda: self._update_progress(0.65))
+
                 # Zapis IR do WAV
                 filename = f"IR_{int(start_f)}-{int(end_f)}Hz_{timestamp}.wav"
                 filepath = os.path.join(output_dir, filename)
 
                 sf.write(filepath, ir, fs)
-                self.after(0, lambda: self._update_progress(0.9))
+                self.after(0, lambda: self._update_progress(0.8))
 
 
             except Exception as e:
@@ -783,20 +807,176 @@ class AboutPage(ctk.CTkFrame):
         super().__init__(parent)
         self.controller = controller
 
+        # ------------------ Tytuł strony ------------------
         title = ctk.CTkLabel(
             self,
-            text="ℹ️ O programie",
-            font=("Roboto", 24, "bold")
+            text="ℹ️  O programie",
+            font=("Roboto", 28, "bold")
         )
-        title.pack(pady=(20, 10), anchor="w", padx=20)
+        title.pack(pady=(20, 5), anchor="w", padx=20)
 
-        subtitle = ctk.CTkLabel(
+        # ------------------ Wersja aplikacji ------------------
+        version_label = ctk.CTkLabel(
             self,
-            text="Easy IResponse\nAplikacja do pomiaru i generowania odpowiedzi impulsowych.\n"
-                 "Autor: Ty 🙂",
-            justify="left"
+            text="Wersja aplikacji: v1.1",
+            font=("Roboto", 15),
+            text_color="#cccccc"
         )
-        subtitle.pack(pady=(0, 20), anchor="w", padx=20)
+        version_label.pack(anchor="w", padx=20, pady=(0, 3))
+
+        # ------------------ Klikalny link GitHub ------------------
+        def open_github():
+            webbrowser.open("https://github.com/0-Revelin-0/inz_python.git")
+
+        github_link = ctk.CTkLabel(
+            self,
+            text="Repozytorium GitHub (kliknij, aby otworzyć)",
+            font=("Roboto", 15, "underline"),
+            text_color="#4da6ff",
+            cursor="hand2"
+        )
+        github_link.bind("<Button-1>", lambda e: open_github())
+        github_link.pack(anchor="w", padx=20, pady=(0, 15))
+
+        # ------------------ TABVIEW ------------------
+        tabs = ctk.CTkTabview(self, width=920, height=560)
+        tabs.pack(fill="both", expand=True, padx=20, pady=20)
+
+        # Tworzenie tabów
+        tabs.add("Opis programu")
+        tabs.add("Funkcjonalności")
+        tabs.add("Instrukcja pomiaru")
+        tabs.add("Instrukcja generowania IR")      # NOWY TAB
+        tabs.add("Instrukcja splotu IR z audio")   # NOWY TAB
+        tabs.add("O autorze")
+        tabs.add("Informacje techniczne")
+
+        # ------------------ Helper do sekcji ------------------
+        def add_section(tab, title_text, body_text):
+            frame = ctk.CTkFrame(tab, fg_color="transparent")
+            frame.pack(fill="both", expand=True, padx=20, pady=15)
+
+            # Nagłówek sekcji
+            ctk.CTkLabel(
+                frame,
+                text=title_text,
+                font=("Roboto", 20, "bold")
+            ).pack(anchor="w", pady=(0, 10))
+
+            # Tekst sekcji
+            ctk.CTkLabel(
+                frame,
+                text=body_text,
+                font=("Roboto", 16),
+                justify="left",
+                wraplength=850
+            ).pack(anchor="w", pady=5)
+
+        # ======================================================
+        # 1. OPIS PROGRAMU
+        # ======================================================
+
+        opis = (
+            "Easy IResponse to zaawansowana aplikacja służąca do pomiaru oraz syntezy akustycznej "
+            "odpowiedzi impulsowej pomieszczeń z zastosowaniem metody Exponential Sine Sweep (ESS). "
+            "Program integruje generację sygnału testowego, jego odtworzenie, rejestrację odpowiedzi "
+            "toru elektroakustycznego oraz dekonwolucję widmową w celu uzyskania czystej odpowiedzi "
+            "liniowej. Aplikacja służy również do analizy IR, generowania syntetycznych IR, "
+            "a także — w rozszerzeniach — do wykonywania splotu IR z sygnałem audio w procesach "
+            "auralizacji wnętrz."
+        )
+        add_section(tabs.tab("Opis programu"), "Opis programu", opis)
+
+        # ======================================================
+        # 2. FUNKCJONALNOŚCI
+        # ======================================================
+
+        funkcje = (
+            "• Pomiar odpowiedzi impulsowej metodą ESS\n"
+            "• Automatyczna dekonwolucja w dziedzinie częstotliwości\n"
+            "• Eliminacja nieliniowych odpowiedzi harmonicznych\n"
+            "• Analiza IR (czasowa i częstotliwościowa)\n"
+            "• Zapis wyników do plików WAV (32-bit float)\n"
+            "• Kalibracja SPL z wykorzystaniem różowego szumu\n"
+            "• Konfiguracja urządzeń wejścia/wyjścia audio\n"
+            "• Generowanie syntetycznych IR\n"
+            "• Splot IR z sygnałem audio (moduł rozszerzalny)"
+        )
+        add_section(tabs.tab("Funkcjonalności"), "Funkcjonalności", funkcje)
+
+        # ======================================================
+        # 3. INSTRUKCJA POMIARU
+        # ======================================================
+
+        instrukcja = (
+            "1. Wybierz urządzenia audio w zakładce „Ustawienia”.\n"
+            "2. Ustaw sample rate (zalecane: 48 kHz) oraz buffer size.\n"
+            "3. Wykonaj kalibrację SPL przy użyciu różowego szumu.\n"
+            "4. Ustaw parametry sweepa i długość IR (≥ długość sweepa).\n"
+            "5. Rozpocznij pomiar. Aplikacja automatycznie wykona:\n"
+            "   • generację sweepa,\n"
+            "   • odtworzenie sygnału,\n"
+            "   • nagranie odpowiedzi,\n"
+            "   • dekonwolucję,\n"
+            "   • zapis IR oraz nagrania.\n\n"
+            "Wynikiem pomiaru są pliki:\n"
+            "• RECORDED_xxx.wav — nagranie sweepa,\n"
+            "• IR_xxx.wav — finalna odpowiedź impulsowa."
+        )
+        add_section(tabs.tab("Instrukcja pomiaru"), "Instrukcja pomiaru IR", instrukcja)
+
+        # ======================================================
+        # 4. PUSTY TAB – INSTRUKCJA GENEROWANIA IR
+        # ======================================================
+
+        add_section(
+            tabs.tab("Instrukcja generowania IR"),
+            "Instrukcja generowania IR",
+            "Ta sekcja zostanie uzupełniona."
+        )
+
+        # ======================================================
+        # 5. PUSTY TAB – INSTRUKCJA SPLOTU IR Z AUDIO
+        # ======================================================
+
+        add_section(
+            tabs.tab("Instrukcja splotu IR z audio"),
+            "Instrukcja splotu IR z sygnałem audio",
+            "Ta sekcja zostanie uzupełniona."
+        )
+
+        # ======================================================
+        # 6. O AUTORZE
+        # ======================================================
+
+        autor = (
+            "Autor: Oskar Racułt\n"
+            "Kierunek: Inżynieria Akustyczna\n"
+            "Wydział Inżynierii Mechanicznej i Robotyki, Akademia Górniczo-Hutnicza w Krakowie\n\n"
+            "Aplikacja opracowana jako część pracy inżynierskiej pt.:\n"
+            "„Easy IResponse – Aplikacja do pomiaru i syntezy odpowiedzi impulsowej pomieszczeń "
+            "na potrzeby auralizacji wnętrz”."
+        )
+        add_section(tabs.tab("O autorze"), "O autorze", autor)
+
+        # ======================================================
+        # 7. INFORMACJE TECHNICZNE
+        # ======================================================
+
+        techniczne = (
+            "• Algorytm pomiarowy: Exponential Sine Sweep (ESS)\n"
+            "• Dekonwolucja: FFT(recorded) × FFT(inverse sweep)\n"
+            "• Format audio: WAV 32-bit float, mono\n"
+            "• Biblioteki: numpy, sounddevice, soundfile, customtkinter, matplotlib\n"
+            "• Wymagania systemowe: Windows 10/11, Python 3.10+\n"
+            "• Zalecenia pomiarowe:\n"
+            "   – mikrofon pomiarowy\n"
+            "   – głośnik pełnopasmowy\n"
+            "   – niskoszumowe środowisko pomiarowe"
+        )
+        add_section(tabs.tab("Informacje techniczne"), "Informacje techniczne", techniczne)
+
+
 
 
 # --------------------------------------------------

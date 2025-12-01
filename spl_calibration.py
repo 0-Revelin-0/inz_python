@@ -49,7 +49,7 @@ class PinkNoisePlayer:
         self.idx = 0
         self.fs = 48000
 
-    def start(self, audio_cfg, level_db=-3):
+    def start(self, audio_cfg, level_db=0):
         if self.running:
             return
 
