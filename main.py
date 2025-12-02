@@ -5,6 +5,7 @@ import threading
 import numpy as np
 import os
 import time
+import sys
 import tkinter.filedialog as fd
 import matplotlib.pyplot as plt
 import matplotlib
@@ -23,7 +24,14 @@ from matplotlib.ticker import ScalarFormatter
 from measurement_engine import measure_ir
 from spl_calibration import PinkNoisePlayer, measure_input_level, InputLevelMonitor
 
-
+#---------- Zaciąganie theme w .exe i .py ----------
+def resource_path(relative_path: str) -> str:
+    """Znajduje pliki także w .exe (PyInstaller)."""
+    try:
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
 
 
 # --- Wyłączenie wewnętrznych after() CustomTkinter ---
@@ -34,7 +42,8 @@ ctk.deactivate_automatic_dpi_awareness()
 # KONFIGURACJA GLOBALNA
 # --------------------------------------------------
 ctk.set_appearance_mode("dark")
-ctk.set_default_color_theme("dark-red.json")  # plik obok main.py
+ctk.set_default_color_theme(resource_path("dark-red.json"))
+
 
 
 
