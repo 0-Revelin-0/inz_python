@@ -51,25 +51,164 @@ def generate_inverse_filter(sweep, fs, f_start, f_end):
 
 def playrec_sweep(sweep, fs, audio_cfg, extra_silence=1.0):
     """
-    Odtwarza sweep na wyjściu i JEDNOCZEŚNIE nagrywa wejście,
-    używając osobnego OutputStream i InputStream (manualny full-duplex).
+    Odtwarza sweep na wyjściu i jednocześnie nagrywa wejście.
 
-    To omija problemy sd.playrec() z PaError -9998 ("Invalid number of channels")
-    na wielu sterownikach (Realtek, WASAPI itd.).
+    Obsługuje:
+    - MONO:  1 kanał z input_device
+    - STEREO wariant A: 2 kanały z JEDNEGO device'a (input_device_L == input_device_R)
+    - STEREO wariant B: 2 osobne device'y (input_device_L != input_device_R)
     """
     silence = np.zeros(int(fs * extra_silence), dtype=np.float32)
     play_sig = np.concatenate([sweep, silence]).astype(np.float32)
 
-    # Kolejka na zarejestrowane próbki z callbacku wejściowego
-    q = queue.Queue()
+    channels_in = int(audio_cfg.get("input_channels", 1))
+    mode = str(audio_cfg.get("measurement_mode", "Mono")).lower()
 
-    # --- CALLBACK WEJŚCIA ---
-    def input_callback(indata, frames, time, status):
+    # Aliasy / domyślne wartości
+    in_L = audio_cfg.get("input_device_L", audio_cfg.get("input_device"))
+    in_R = audio_cfg.get("input_device_R", in_L)
+    out_dev = audio_cfg["output_device"]
+    blocksize = audio_cfg["buffer_size"]
+
+    # ------------------------------------------------------
+    # 1) MONO: klasyczny przypadek – 1 input stream, 1 kanał
+    # ------------------------------------------------------
+    if channels_in == 1 or mode.startswith("mono"):
+        q = queue.Queue()
+
+        def input_callback(indata, frames, time, status):
+            if status:
+                print("Input status:", status)
+            q.put(indata.copy())
+
+        play_pos = 0
+
+        def output_callback(outdata, frames, time, status):
+            nonlocal play_pos
+            if status:
+                print("Output status:", status)
+
+            end = min(play_pos + frames, len(play_sig))
+            chunk = play_sig[play_pos:end]
+
+            outdata[:, 0] = 0.0
+            outdata[:len(chunk), 0] = chunk
+            play_pos = end
+
+        in_stream = sd.InputStream(
+            samplerate=fs,
+            channels=1,
+            device=in_L,
+            blocksize=blocksize,
+            dtype="float32",
+            callback=input_callback,
+        )
+
+        out_stream = sd.OutputStream(
+            samplerate=fs,
+            channels=1,
+            device=out_dev,
+            blocksize=blocksize,
+            dtype="float32",
+            callback=output_callback,
+        )
+
+        in_stream.start()
+        out_stream.start()
+
+        while play_pos < len(play_sig):
+            sd.sleep(10)
+
+        out_stream.stop(); out_stream.close()
+        in_stream.stop(); in_stream.close()
+
+        blocks = []
+        while not q.empty():
+            blocks.append(q.get())
+
+        if not blocks:
+            raise RuntimeError("Brak nagranego sygnału podczas pomiaru IR.")
+
+        recorded = np.concatenate(blocks, axis=0)  # (N, 1)
+        return recorded[:, 0].copy()
+
+    # ------------------------------------------------------
+    # 2) STEREO z jednego device'a (2 kanały)
+    # ------------------------------------------------------
+    if in_L == in_R:
+        q = queue.Queue()
+
+        def input_callback(indata, frames, time, status):
+            if status:
+                print("Input status (stereo 1 dev):", status)
+            q.put(indata.copy())   # (frames, 2)
+
+        play_pos = 0
+
+        def output_callback(outdata, frames, time, status):
+            nonlocal play_pos
+            if status:
+                print("Output status:", status)
+
+            end = min(play_pos + frames, len(play_sig))
+            chunk = play_sig[play_pos:end]
+
+            outdata[:, 0] = 0.0
+            outdata[:len(chunk), 0] = chunk
+            play_pos = end
+
+        in_stream = sd.InputStream(
+            samplerate=fs,
+            channels=2,
+            device=in_L,
+            blocksize=blocksize,
+            dtype="float32",
+            callback=input_callback,
+        )
+
+        out_stream = sd.OutputStream(
+            samplerate=fs,
+            channels=1,
+            device=out_dev,
+            blocksize=blocksize,
+            dtype="float32",
+            callback=output_callback,
+        )
+
+        in_stream.start()
+        out_stream.start()
+
+        while play_pos < len(play_sig):
+            sd.sleep(10)
+
+        out_stream.stop(); out_stream.close()
+        in_stream.stop(); in_stream.close()
+
+        blocks = []
+        while not q.empty():
+            blocks.append(q.get())
+        if not blocks:
+            raise RuntimeError("Brak nagranego sygnału podczas pomiaru IR (stereo 1 dev).")
+
+        recorded = np.concatenate(blocks, axis=0)  # (N, 2)
+        return recorded.copy()
+
+    # ------------------------------------------------------
+    # 3) STEREO z dwóch device'ów (L i R osobno)
+    # ------------------------------------------------------
+    qL = queue.Queue()
+    qR = queue.Queue()
+
+    def input_callback_L(indata, frames, time, status):
         if status:
-            print("Input status:", status)
-        q.put(indata.copy())
+            print("Input L status:", status)
+        qL.put(indata.copy())   # (frames,1)
 
-    # --- CALLBACK WYJŚCIA ---
+    def input_callback_R(indata, frames, time, status):
+        if status:
+            print("Input R status:", status)
+        qR.put(indata.copy())   # (frames,1)
+
     play_pos = 0
 
     def output_callback(outdata, frames, time, status):
@@ -80,57 +219,69 @@ def playrec_sweep(sweep, fs, audio_cfg, extra_silence=1.0):
         end = min(play_pos + frames, len(play_sig))
         chunk = play_sig[play_pos:end]
 
-        # wypełnij to, co mamy
         outdata[:, 0] = 0.0
         outdata[:len(chunk), 0] = chunk
         play_pos = end
 
-    # Tworzymy dwa osobne streamy
-    in_stream = sd.InputStream(
+    in_stream_L = sd.InputStream(
         samplerate=fs,
         channels=1,
-        device=audio_cfg["input_device"],
-        blocksize=audio_cfg["buffer_size"],
+        device=in_L,
+        blocksize=blocksize,
         dtype="float32",
-        callback=input_callback,
+        callback=input_callback_L,
+    )
+
+    in_stream_R = sd.InputStream(
+        samplerate=fs,
+        channels=1,
+        device=in_R,
+        blocksize=blocksize,
+        dtype="float32",
+        callback=input_callback_R,
     )
 
     out_stream = sd.OutputStream(
         samplerate=fs,
         channels=1,
-        device=audio_cfg["output_device"],
-        blocksize=audio_cfg["buffer_size"],
+        device=out_dev,
+        blocksize=blocksize,
         dtype="float32",
         callback=output_callback,
     )
 
-    # Startujemy oba
-    in_stream.start()
+    in_stream_L.start()
+    in_stream_R.start()
     out_stream.start()
 
-    # Czekamy, aż cały sweep zostanie odtworzony
-    while True:
-        if play_pos >= len(play_sig):
-            break
-        sd.sleep(10)  # krótkie "drzemki", żeby nie blokować CPU
+    while play_pos < len(play_sig):
+        sd.sleep(10)
 
-    # Zatrzymujemy i zamykamy strumienie
-    out_stream.stop()
-    in_stream.stop()
-    out_stream.close()
-    in_stream.close()
+    out_stream.stop(); out_stream.close()
+    in_stream_L.stop(); in_stream_L.close()
+    in_stream_R.stop(); in_stream_R.close()
 
-    # Zbieramy wszystko z kolejki
-    recorded_blocks = []
-    while not q.empty():
-        recorded_blocks.append(q.get())
+    # Zbierz bloki
+    blocks_L, blocks_R = [], []
+    while not qL.empty():
+        blocks_L.append(qL.get())
+    while not qR.empty():
+        blocks_R.append(qR.get())
 
-    if not recorded_blocks:
-        raise RuntimeError("Brak nagranego sygnału podczas pomiaru IR.")
+    if not blocks_L or not blocks_R:
+        raise RuntimeError("Brak nagranego sygnału na jednym z kanałów L/R.")
 
-    recorded = np.concatenate(recorded_blocks, axis=0).flatten()
+    recL = np.concatenate(blocks_L, axis=0)  # (N_L,1)
+    recR = np.concatenate(blocks_R, axis=0)  # (N_R,1)
 
+    # przytnij do wspólnej długości
+    min_len = min(len(recL), len(recR))
+    recL = recL[:min_len, 0]
+    recR = recR[:min_len, 0]
+
+    recorded = np.column_stack([recL, recR])  # (N, 2)
     return recorded.copy()
+
 
 
 
@@ -139,7 +290,14 @@ def deconvolve_ir(recorded, inverse_filter, fs, ir_length_s, fade_time_s):
     """
     Dekonwolucja (ESS * inverse filter) → IR.
     Przycinamy do ir_length_s i robimy fade na końcu.
+
+    Uwaga: TA FUNKCJA NIE NORMALIZUJE już IR.
+    Normalizacja jest wykonywana na wyższym poziomie (w measure_ir),
+    aby dla stereo móc zastosować wspólny współczynnik dla L/R.
     """
+    recorded = np.asarray(recorded, dtype=np.float32)
+    inverse_filter = np.asarray(inverse_filter, dtype=np.float32)
+
     n_conv = len(recorded) + len(inverse_filter) - 1
 
     # najbliższa potęga 2 do FFT
@@ -154,38 +312,21 @@ def deconvolve_ir(recorded, inverse_filter, fs, ir_length_s, fade_time_s):
     ir_samples = int(ir_length_s * fs)
     ir = ir_full[:ir_samples]
 
-    # ================================
-    # 1. Przesunięcie impulsu do t=0
-    # ================================
+    # 1. Przesunięcie impulsu do t=0 (direct sound)
     peak = np.argmax(np.abs(ir))
     ir = np.roll(ir, -peak)
 
-    # --- Auto trimming IR ---
-    # ir = trim_ir(ir, fs, pre_ms=50, post_ms=100, tail_drop_db=60)
-
-    # ================================
-    # 2. Usunięcie harmonicznych
-    # (zostawiamy tylko pierwsze 0.5 s IR)
-    # ================================
-    # cut = int(0.5 * fs)
-    # if cut < len(ir):
-    #     ir = ir[:cut]
-
+    # 2. Fade na końcu IR
     ir_samples = len(ir)
-
-    # fade na końcu IR
     fade_samples = int(fade_time_s * fs)
-    if fade_samples > 0 and fade_samples < ir_samples:
+    if 0 < fade_samples < ir_samples:
         window = np.ones(ir_samples, dtype=np.float32)
         tail = np.linspace(1.0, 0.0, fade_samples, endpoint=True)
         window[-fade_samples:] = tail
         ir *= window
 
-    # normalizacja, żeby nie wyskoczyć z zakresu przy zapisie
-    max_val = np.max(np.abs(ir) + 1e-12)
-    ir = ir / max_val
-
     return ir.astype(np.float32)
+
 
 def trim_ir(ir, fs, pre_ms=50, post_ms=300, tail_drop_db=60):
     """
@@ -279,18 +420,27 @@ def measure_ir(params, audio_cfg):
 
     audio_cfg: dict
         {
-          "input_device": int,
-          "output_device": int,
-          "sample_rate": int,
-          "buffer_size": int
+          "input_device":    int,
+          "output_device":   int,
+          "sample_rate":     int,
+          "buffer_size":     int,
+          "input_channels":  int (1 = mono, 2 = stereo)  [opcjonalne, domyślnie 1]
         }
 
     Zwraca:
-        ir        - numpy array (float32)
+        ir        - numpy array:
+                    mono:  (N,)
+                    stereo:(N, 2)
         freqs     - numpy array [Hz]
-        mag_db    - numpy array [dB]
+        mag_db    - numpy array [dB]:
+                    mono:  (F,)
+                    stereo:(F, 2)
+        recorded  - surowe nagranie z wejścia:
+                    mono:  (N,)
+                    stereo:(N, 2)
     """
     fs = int(audio_cfg["sample_rate"])
+    channels_in = int(audio_cfg.get("input_channels", 1))
 
     sweep = generate_exponential_sweep(
         fs,
@@ -312,18 +462,64 @@ def measure_ir(params, audio_cfg):
         extra_silence=params["ir_length"]
     )
 
+    # --- MONO ---
+    if recorded.ndim == 1 or channels_in == 1:
+        if recorded.ndim > 1:
+            recorded_mono = recorded[:, 0]
+        else:
+            recorded_mono = recorded
 
-    ir = deconvolve_ir(
-        recorded,
-        inv,
-        fs,
-        params["ir_length"],
-        params["fade_time"],
-    )
+        ir = deconvolve_ir(
+            recorded_mono,
+            inv,
+            fs,
+            params["ir_length"],
+            params["fade_time"],
+        )
 
-    freqs, mag_db = compute_mag_response(ir, fs)
+        # normalizacja pojedynczego kanału
+        max_val = np.max(np.abs(ir)) + 1e-12
+        ir = (ir / max_val).astype(np.float32)
 
-    return ir, freqs, mag_db, recorded
+        freqs, mag_db = compute_mag_response(ir, fs)
+        return ir, freqs, mag_db, recorded_mono
+
+    # --- STEREO (lub więcej kanałów) ---
+    if recorded.ndim == 1:
+        # awaryjnie traktujemy to jako 1 kanał, choć konfiguracja mówi co innego
+        recorded = recorded.reshape(-1, 1)
+
+    n_ch = recorded.shape[1]
+
+    ir_list = []
+    for ch in range(n_ch):
+        ir_ch = deconvolve_ir(
+            recorded[:, ch],
+            inv,
+            fs,
+            params["ir_length"],
+            params["fade_time"],
+        )
+        ir_list.append(ir_ch)
+
+    # zakładamy tę samą długość wszystkich kanałów
+    min_len = min(len(x) for x in ir_list)
+    ir_array = np.stack([x[:min_len] for x in ir_list], axis=1)  # (N, n_ch)
+
+    # WSPÓLNA NORMALIZACJA DLA WSZYSTKICH KANAŁÓW (L/R itd.)
+    max_val = np.max(np.abs(ir_array)) + 1e-12
+    ir_array = (ir_array / max_val).astype(np.float32)
+
+    # Charakterystyki amplitudowe dla każdego kanału
+    freqs, mag0 = compute_mag_response(ir_array[:, 0], fs)
+    mag_db = np.empty((len(freqs), n_ch), dtype=np.float32)
+    mag_db[:, 0] = mag0
+    for ch in range(1, n_ch):
+        _, mag_c = compute_mag_response(ir_array[:, ch], fs)
+        mag_db[:, ch] = mag_c
+
+    return ir_array, freqs, mag_db, recorded
+
 
 
 def smooth_mag_response(freqs, mag_db, fraction=6):

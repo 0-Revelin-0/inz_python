@@ -16,7 +16,7 @@ import soundfile as sf
 import webbrowser
 from matplotlib.ticker import LogLocator, StrMethodFormatter
 from matplotlib.ticker import ScalarFormatter
-from matplotlib.ticker import ScalarFormatter
+
 
 
 
@@ -71,10 +71,19 @@ class MeasurementPage(ctk.CTkFrame):
         super().__init__(parent)
         self.controller = controller
 
-        self.last_ir = None
+        # Dane z ostatniego pomiaru (mono / stereo)
+        self.last_ir = None  # do prostego użytku (mono lub aktualnie wybrany kanał)
         self.last_freqs = None
         self.last_mag = None
         self.last_fs = None
+
+        # Dane per-kanał dla trybu stereo
+        self.last_ir_L = None
+        self.last_ir_R = None
+        self.last_mag_L = None
+        self.last_mag_R = None
+        self.last_is_stereo = False
+        self.current_channel = "L"  # 'L' albo 'R' na wykresie
 
         # ==============================================================
         # GŁÓWNY UKŁAD STRONY: LEWA KOLUMNA + PRAWA KOLUMNA
@@ -188,8 +197,26 @@ class MeasurementPage(ctk.CTkFrame):
         plot_frame.grid_columnconfigure(0, weight=1)
         plot_frame.grid_rowconfigure(0, weight=1)
 
+        # Panel wyboru kanału do podglądu (L / R)
+        channel_frame = ctk.CTkFrame(plot_frame, fg_color="transparent")
+        channel_frame.pack(fill="x", padx=10, pady=(10, 0))
+
+        ctk.CTkLabel(
+            channel_frame,
+            text="Kanał do podglądu:"
+        ).pack(side="left", padx=(0, 10))
+
+        self.channel_selector = ctk.CTkSegmentedButton(
+            channel_frame,
+            values=["L", "R"],
+            command=self._on_channel_change
+        )
+        self.channel_selector.pack(side="left")
+        self.channel_selector.set("L")
+
         # ---------- Matplotlib figure: 2 subplots ----------
         self.fig = Figure(figsize=(6, 5), dpi=100, facecolor="#111111", tight_layout=True)
+
 
         # Impulse Response
         self.ax_ir = self.fig.add_subplot(2, 1, 1)
@@ -217,26 +244,42 @@ class MeasurementPage(ctk.CTkFrame):
         self._clear_plots()
 
     def update_plots(self):
-        """Aktualizuje wykresy bazując na ostatnim pomiarze."""
+        """Aktualizuje wykresy bazując na ostatnim pomiarze (mono lub stereo)."""
 
-        if self.last_ir is None:
-            return  # nie ma danych
+        # Brak danych – nic nie rysujemy
+        if (not self.last_is_stereo and self.last_ir is None) and self.last_ir_L is None:
+            return
 
-        ir = self.last_ir
-        freqs = self.last_freqs
-        mag_db = self.last_mag
         fs = self.last_fs
+        freqs = self.last_freqs
+        if fs is None or freqs is None:
+            return
+
+        # Wybór kanału do rysowania
+        if self.last_is_stereo:
+            if self.current_channel == "R" and self.last_ir_R is not None:
+                ir_full = self.last_ir_R
+                mag_db = self.last_mag_R
+                channel_label = "Right"
+            else:
+                ir_full = self.last_ir_L
+                mag_db = self.last_mag_L
+                channel_label = "Left"
+        else:
+            ir_full = self.last_ir
+            mag_db = self.last_mag
+            channel_label = "Mono"
+
+        if ir_full is None or mag_db is None:
+            return
 
         # --- IR ---
         self.ax_ir.cla()
         self.ax_ir.set_facecolor("#111111")
         self.ax_ir.grid(True, color="#444444", alpha=0.3)
-        self.ax_ir.set_title("Impulse Response", color="white")
+        self.ax_ir.set_title(f"Impulse Response ({channel_label})", color="white")
         self.ax_ir.set_xlabel("Czas [s]", color="white")
         self.ax_ir.set_ylabel("Amplituda", color="white")
-
-        ir_full = self.last_ir
-        fs = self.last_fs
 
         # 1) Szukamy największego piku IR
         peak_idx = np.argmax(np.abs(ir_full))
@@ -270,7 +313,7 @@ class MeasurementPage(ctk.CTkFrame):
         self.ax_mag.cla()
         self.ax_mag.set_facecolor("#111111")
         self.ax_mag.grid(True, color="#444444", alpha=0.3)
-        self.ax_mag.set_title("Magnitude Response", color="white")
+        self.ax_mag.set_title(f"Magnitude Response ({channel_label})", color="white")
         self.ax_mag.set_xlabel("Częstotliwość [Hz]", color="white")
         self.ax_mag.set_ylabel("Poziom [dB]", color="white")
 
@@ -282,16 +325,14 @@ class MeasurementPage(ctk.CTkFrame):
                 mag_plot = mag_db
             else:
                 mag_plot = smooth_mag_response(freqs, mag_db, fraction=smoothing)
-        except:
+        except Exception:
             mag_plot = mag_db
 
         self.ax_mag.semilogx(freqs, mag_plot, linewidth=1.5, color="#0096FF")
 
-        # LOGARYTMICZNE ODSTĘPY JAK W REW / SMAART
         self.ax_mag.xaxis.set_major_locator(LogLocator(base=10.0))
         self.ax_mag.xaxis.set_minor_locator(LogLocator(base=10.0, subs=np.arange(2, 10)))
 
-        #self.ax_mag.xaxis.set_major_formatter(StrMethodFormatter('{x:.0f}'))
         formatter = ScalarFormatter()
         formatter.set_scientific(False)
         self.ax_mag.xaxis.set_major_formatter(formatter)
@@ -300,10 +341,17 @@ class MeasurementPage(ctk.CTkFrame):
             start_f = float(self.start_freq.get())
             end_f = float(self.end_freq.get())
             self.ax_mag.set_xlim(start_f * 0.9, end_f * 1.1)
-        except:
+        except Exception:
             pass
 
         self.canvas.draw()
+
+    def _on_channel_change(self, value: str):
+        """Obsługa przełączania kanału L/R na wykresach."""
+        self.current_channel = value
+        # Samo przerysowanie – update_plots wybierze odpowiedni kanał
+        self.update_plots()
+
 
     # =====================================================================
     # FUNKCJE POMOCNICZE
@@ -400,7 +448,6 @@ class MeasurementPage(ctk.CTkFrame):
             self._stop_pink_noise()
         except Exception:
             pass
-        """Start pomiaru IR – wywołuje measurement_engine w osobnym wątku."""
         # 1. Parsowanie parametrów z panelu po lewej
         try:
             sweep_len = float(self.sweep_length.get())
@@ -458,126 +505,108 @@ class MeasurementPage(ctk.CTkFrame):
         # 5. Worker w osobnym wątku (żeby nie blokować GUI)
         def worker():
             try:
-
                 self.after(0, lambda: self._update_progress(0.2))
-                ir, freqs, mag_db, recorded = measure_ir(params, audio_cfg)
-                self.last_ir = ir
-                self.last_freqs = freqs
-                self.last_mag = mag_db
-                self.last_fs = audio_cfg["sample_rate"]
 
-                self.after(0, lambda: self._update_progress(0.4))
+                ir, freqs, mag_db, recorded = measure_ir(params, audio_cfg)
                 fs = audio_cfg["sample_rate"]
 
-                timestamp = time.strftime("%Y%m%d_%H%M%S")
+                # Rozpoznanie trybu mono / stereo na podstawie kształtu IR
+                if hasattr(ir, "ndim") and ir.ndim == 2 and ir.shape[1] >= 2:
+                    # STEREO
+                    self.last_is_stereo = True
+                    self.current_channel = "L"
 
-                # zapis surowego nagrania sweepa
-                rec_filename = f"RECORDED_{timestamp}.wav"
-                rec_filepath = os.path.join(output_dir, rec_filename)
-                sf.write(rec_filepath, recorded, fs)
+                    self.last_ir_L = ir[:, 0]
+                    self.last_ir_R = ir[:, 1]
+                    self.last_ir = self.last_ir_L
+
+                    # mag_db: (F, 2)
+                    self.last_mag_L = mag_db[:, 0]
+                    self.last_mag_R = mag_db[:, 1]
+                    self.last_mag = self.last_mag_L
+                else:
+                    # MONO
+                    self.last_is_stereo = False
+
+                    if ir.ndim > 1:
+                        ir_mono = ir[:, 0]
+                    else:
+                        ir_mono = ir
+
+                    self.last_ir = ir_mono
+                    self.last_ir_L = ir_mono
+                    self.last_ir_R = None
+
+                    if mag_db.ndim == 1:
+                        mag_mono = mag_db
+                    else:
+                        mag_mono = mag_db[..., 0]
+
+                    self.last_mag = mag_mono
+                    self.last_mag_L = mag_mono
+                    self.last_mag_R = None
+
+                self.last_freqs = freqs
+                self.last_fs = fs
+
+                self.after(0, lambda: self._update_progress(0.4))
+
+                timestamp = time.strftime("%Y%m%d_%H%M%S")
+                output_dir_local = output_dir  # zamrożenie w closure
+
+                # --- ZAPIS SUROWEGO NAGRANIA SWEEPA ---
+                if self.last_is_stereo and hasattr(recorded, "ndim") and recorded.ndim == 2 and recorded.shape[1] >= 2:
+                    rec_L = recorded[:, 0]
+                    rec_R = recorded[:, 1]
+
+                    rec_filename_L = f"RECORDED_L_{timestamp}.wav"
+                    rec_filename_R = f"RECORDED_R_{timestamp}.wav"
+
+                    sf.write(os.path.join(output_dir_local, rec_filename_L), rec_L, fs)
+                    sf.write(os.path.join(output_dir_local, rec_filename_R), rec_R, fs)
+                else:
+                    rec_filename = f"RECORDED_{timestamp}.wav"
+                    sf.write(os.path.join(output_dir_local, rec_filename), recorded, fs)
 
                 self.after(0, lambda: self._update_progress(0.65))
 
-                # Zapis IR do WAV
-                filename = f"IR_{int(start_f)}-{int(end_f)}Hz_{timestamp}.wav"
-                filepath = os.path.join(output_dir, filename)
+                # --- ZAPIS IR ---
+                if self.last_is_stereo:
+                    ir_filename_L = f"IR_L_{int(start_f)}-{int(end_f)}Hz_{timestamp}.wav"
+                    ir_filename_R = f"IR_R_{int(start_f)}-{int(end_f)}Hz_{timestamp}.wav"
 
-                sf.write(filepath, ir, fs)
+                    sf.write(os.path.join(output_dir_local, ir_filename_L), self.last_ir_L, fs)
+                    sf.write(os.path.join(output_dir_local, ir_filename_R), self.last_ir_R, fs)
+
+                    saved_info = f"{ir_filename_L}\n{ir_filename_R}"
+                else:
+                    ir_filename = f"IR_{int(start_f)}-{int(end_f)}Hz_{timestamp}.wav"
+                    sf.write(os.path.join(output_dir_local, ir_filename), self.last_ir, fs)
+                    saved_info = ir_filename
+
                 self.after(0, lambda: self._update_progress(0.8))
 
-
             except Exception as e:
-
                 err_msg = f"Błąd podczas pomiaru:\n\n{e}"
 
-                # Aktualizacja GUI MUSI być przez self.after(...)
                 def on_error(msg=err_msg):
                     show_error(msg)
                     self.status_label.configure(text="Błąd pomiaru.")
                     self.start_button.configure(state="normal")
+
                 self.after(0, on_error)
                 return
 
-            # Funkcja do aktualizacji wykresów w wątku GUI
-            # def update_plots():
-            #     # --- IR ---
-            #     self.ax_ir.cla()
-            #     self.ax_ir.set_facecolor("#111111")
-            #     self.ax_ir.grid(True, color="#444444", alpha=0.3)
-            #     self.ax_ir.set_title("Impulse Response", color="white")
-            #     self.ax_ir.set_xlabel("Czas [s]", color="white")
-            #     self.ax_ir.set_ylabel("Amplituda", color="white")
-            #
-            #     t = np.arange(len(ir)) / fs
-            #     self.ax_ir.plot(t, ir, linewidth=0.9)
-            #
-            #     # --- Magnitude ---
-            #     self.ax_mag.cla()
-            #     self.ax_mag.set_facecolor("#111111")
-            #     self.ax_mag.grid(True, color="#444444", alpha=0.3)
-            #     self.ax_mag.set_title("Magnitude Response", color="white")
-            #     self.ax_mag.set_xlabel("Częstotliwość [Hz]", color="white")
-            #     self.ax_mag.set_ylabel("Poziom [dB]", color="white")
-            #
-            #     # --- SMOOTHING 1/6 OCTAVE ---
-            #     try:
-            #         from measurement_engine import smooth_mag_response
-            #         mag_smooth = smooth_mag_response(freqs, mag_db, fraction=6)
-            #     except Exception:
-            #         mag_smooth = mag_db  # fallback
-            #
-            #     # --- RYSUJEMY WYGŁADZONY WYKRES ---
-            #     # --- Dynamic smoothing ---
-            #     smoothing = self.controller.get_smoothing_fraction()
-            #
-            #     try:
-            #         from measurement_engine import smooth_mag_response
-            #         if smoothing is None:  # raw
-            #             mag_plot = mag_db
-            #         else:
-            #             mag_plot = smooth_mag_response(freqs, mag_db, fraction=smoothing)
-            #     except Exception:
-            #         mag_plot = mag_db
-            #
-            #     # Rysowanie
-            #     self.ax_mag.semilogx(freqs, mag_plot, linewidth=1.5, color="#0096FF")
-            #
-            #     # Zakres częstotliwości dopasowany do sweepa
-            #     try:
-            #         start_f = float(self.start_freq.get())
-            #         end_f = float(self.end_freq.get())
-            #         self.ax_mag.set_xlim(start_f * 0.9, end_f * 1.1)
-            #     except:
-            #         pass
-            #
-            #     # --- ZAKRES CZĘSTOTLIWOŚCI (dostosowanie do sweep) ---
-            #     start_f = self.controller.pages["measurement"].start_freq.get()
-            #     end_f = self.controller.pages["measurement"].end_freq.get()
-            #
-            #     try:
-            #         start_f = float(start_f)
-            #         end_f = float(end_f)
-            #         self.ax_mag.set_xlim(start_f * 0.85, end_f * 1.15)
-            #     except:
-            #         pass
-            #
-            #     self.canvas.draw()
-            #
-            #     self.status_label.configure(
-            #         text=f"Pomiar zakończony. Zapisano plik:\n{filename}"
-            #     )
-            #     self.start_button.configure(state="normal")
-
+            # Finalizacja – przerysowanie wykresów i komunikat
             self.after(0, lambda: self._update_progress(1.0))
             self.after(0, self.update_plots)
-
-            # >>> DODAJ TO <<<
-            self.after(0, lambda: self.status_label.configure(
-                text=f"Pomiar zakończony. Zapisano plik:\n{filename}"
-            ))
+            self.after(
+                0,
+                lambda: self.status_label.configure(
+                    text=f"Pomiar zakończony. Zapisano plik(i):\n{saved_info}"
+                ),
+            )
             self.after(0, lambda: self.start_button.configure(state="normal"))
-
-
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -798,64 +827,75 @@ class SettingsPage(ctk.CTkFrame):
         frame.grid_columnconfigure(1, weight=1)
 
         # ---------------- WEJŚCIA / WYJŚCIA ----------------
-        # Teraz NIE ma "Audio device" – od razu wybieramy konkretne wejście / wyjście
-        ctk.CTkLabel(frame, text="Input channel:").grid(row=0, column=0, padx=10, pady=10, sticky="w")
-        self.input_combo = ctk.CTkComboBox(frame, values=[])
-        self.input_combo.grid(row=0, column=1, padx=10, pady=10, sticky="ew")
+        # Dwa osobne inputy: Left / Right
+        ctk.CTkLabel(frame, text="Input (Left):").grid(row=0, column=0, padx=10, pady=10, sticky="w")
+        self.input_L_combo = ctk.CTkComboBox(frame, values=[])
+        self.input_L_combo.grid(row=0, column=1, padx=10, pady=10, sticky="ew")
 
-        ctk.CTkLabel(frame, text="Output channel:").grid(row=1, column=0, padx=10, pady=10, sticky="w")
+        ctk.CTkLabel(frame, text="Input (Right):").grid(row=1, column=0, padx=10, pady=10, sticky="w")
+        self.input_R_combo = ctk.CTkComboBox(frame, values=[])
+        self.input_R_combo.grid(row=1, column=1, padx=10, pady=10, sticky="ew")
+
+        ctk.CTkLabel(frame, text="Output channel:").grid(row=2, column=0, padx=10, pady=10, sticky="w")
         self.output_combo = ctk.CTkComboBox(frame, values=[])
-        self.output_combo.grid(row=1, column=1, padx=10, pady=10, sticky="ew")
+        self.output_combo.grid(row=2, column=1, padx=10, pady=10, sticky="ew")
 
         # Sample rate
-        ctk.CTkLabel(frame, text="Sample rate:").grid(row=2, column=0, padx=10, pady=10, sticky="w")
+        ctk.CTkLabel(frame, text="Sample rate:").grid(row=3, column=0, padx=10, pady=10, sticky="w")
         self.sample_rate_combo = ctk.CTkComboBox(frame, values=["44100", "48000", "88200", "96000", "192000"])
         self.sample_rate_combo.set("48000")
-        self.sample_rate_combo.grid(row=2, column=1, padx=10, pady=10, sticky="ew")
+        self.sample_rate_combo.grid(row=3, column=1, padx=10, pady=10, sticky="ew")
 
         # Buffer size
-        ctk.CTkLabel(frame, text="Buffer size (frames):").grid(row=3, column=0, padx=10, pady=10, sticky="w")
+        ctk.CTkLabel(frame, text="Buffer size (frames):").grid(row=4, column=0, padx=10, pady=10, sticky="w")
         self.buffer_size_combo = ctk.CTkComboBox(frame, values=["64", "128", "256", "512", "1024"])
         self.buffer_size_combo.set("256")
-        self.buffer_size_combo.grid(row=3, column=1, padx=10, pady=10, sticky="ew")
+        self.buffer_size_combo.grid(row=4, column=1, padx=10, pady=10, sticky="ew")
 
         # Smoothing
         ctk.CTkLabel(frame, text="Smoothing (Magnitude):").grid(
-            row=4, column=0, padx=10, pady=10, sticky="w"
+            row=5, column=0, padx=10, pady=10, sticky="w"
         )
-
         self.smoothing_combo = ctk.CTkComboBox(
             frame,
             values=["Raw", "1/24 octave", "1/12 octave", "1/6 octave", "1/3 octave"],
-            command=self._on_smoothing_change  # <-- dynamiczne odświeżanie wykresu
+            command=self._on_smoothing_change
         )
         self.smoothing_combo.set("1/6 octave")
-        self.smoothing_combo.grid(row=4, column=1, padx=10, pady=10, sticky="ew")
+        self.smoothing_combo.grid(row=5, column=1, padx=10, pady=10, sticky="ew")
 
         # IR window after peak (ms)
         ctk.CTkLabel(frame, text="IR window after peak [ms]:").grid(
-            row=5, column=0, padx=10, pady=10, sticky="w"
+            row=6, column=0, padx=10, pady=10, sticky="w"
         )
-
         self.ir_window_entry = ctk.CTkEntry(frame, width=120)
-        self.ir_window_entry.grid(row=5, column=1, padx=10, pady=10, sticky="ew")
-        self.ir_window_entry.insert(0, "500")  # domyślnie 500 ms
-
-        # dynamiczne odświeżanie wykresu przy zmianie wartości
+        self.ir_window_entry.grid(row=6, column=1, padx=10, pady=10, sticky="ew")
+        self.ir_window_entry.insert(0, "500")
         self.ir_window_entry.bind("<KeyRelease>", self._on_ir_window_change)
 
+        # Measurement mode (mono / stereo)
+        ctk.CTkLabel(frame, text="Measurement mode:").grid(
+            row=7, column=0, padx=10, pady=10, sticky="w"
+        )
+        self.measure_mode_combo = ctk.CTkComboBox(
+            frame,
+            values=["Mono", "Stereo"]
+        )
+        self.measure_mode_combo.set("Mono")
+        self.measure_mode_combo.grid(row=7, column=1, padx=10, pady=10, sticky="ew")
+
         # Input meter
-        ctk.CTkLabel(frame, text="Input level:").grid(row=6, column=0, padx=10, pady=10, sticky="w")
+        ctk.CTkLabel(frame, text="Input level:").grid(row=8, column=0, padx=10, pady=10, sticky="w")
         self.meter_bar = ctk.CTkProgressBar(frame, width=220)
-        self.meter_bar.grid(row=6, column=1, padx=10, pady=10, sticky="w")
+        self.meter_bar.grid(row=8, column=1, padx=10, pady=10, sticky="w")
         self.meter_bar.set(0)
 
         self.meter_btn = ctk.CTkButton(frame, text="Start input meter", command=self._toggle_meter)
-        self.meter_btn.grid(row=7, column=1, padx=10, pady=10, sticky="w")
+        self.meter_btn.grid(row=9, column=1, padx=10, pady=10, sticky="w")
 
         # Test tone
         self.test_btn = ctk.CTkButton(frame, text="Test tone (1 kHz)", command=self._play_test)
-        self.test_btn.grid(row=8, column=1, padx=10, pady=15, sticky="w")
+        self.test_btn.grid(row=10, column=1, padx=10, pady=15, sticky="w")
 
         # Załaduj listę wejść/wyjść
         self._load_devices()
@@ -929,26 +969,20 @@ class SettingsPage(ctk.CTkFrame):
         input_values = [e["label"] for e in self.input_entries] or ["Brak wejścia"]
         output_values = [e["label"] for e in self.output_entries] or ["Brak wyjścia"]
 
-        self.input_combo.configure(values=input_values)
+        # Ustawiamy wartości w comboboxach
+        input_values = [e["label"] for e in self.input_entries] or ["Brak wejścia"]
+        output_values = [e["label"] for e in self.output_entries] or ["Brak wyjścia"]
+
+        # Oba inputy (L/R) korzystają z tej samej listy
+        self.input_L_combo.configure(values=input_values)
+        self.input_R_combo.configure(values=input_values)
         self.output_combo.configure(values=output_values)
 
         # Domyślny wybór
-        self.input_combo.set(input_values[0])
+        self.input_L_combo.set(input_values[0])
+        self.input_R_combo.set(input_values[0])
         self.output_combo.set(output_values[0])
 
-    def _on_device_change(self, device_name):
-        dev = next((d for d in self.audio_devices if d["name"] == device_name), None)
-        if not dev:
-            return
-
-        inputs = [i["label"] for i in dev["inputs"]] or ["Brak wejścia"]
-        outputs = [o["label"] for o in dev["outputs"]] or ["Brak wyjścia"]
-
-        self.input_combo.configure(values=inputs)
-        self.output_combo.configure(values=outputs)
-
-        self.input_combo.set(inputs[0])
-        self.output_combo.set(outputs[0])
 
     # =====================================================================
     # --- TEST TONE + INPUT METER ---
@@ -987,16 +1021,31 @@ class SettingsPage(ctk.CTkFrame):
     # --- HELPERS ---
     # =====================================================================
 
-    def get_selected_input_index(self):
-        """Zwraca index urządzenia wejściowego wybranego w input_combo."""
+    def _get_input_index_from_label(self, label: str):
+        """Pomocniczo: zamiana etykiety z comboboxa na index urządzenia."""
         if not hasattr(self, "input_entries"):
             return None
-
-        selected = self.input_combo.get()
         for entry in self.input_entries:
-            if entry["label"] == selected:
+            if entry["label"] == label:
                 return entry["index"]
         return None
+
+    def get_selected_input_L_index(self):
+        """Index urządzenia wejściowego wybranego dla kanału Left."""
+        selected = self.input_L_combo.get()
+        return self._get_input_index_from_label(selected)
+
+    def get_selected_input_R_index(self):
+        """Index urządzenia wejściowego wybranego dla kanału Right."""
+        selected = self.input_R_combo.get()
+        return self._get_input_index_from_label(selected)
+
+    def get_selected_input_index(self):
+        """
+        Zachowanie wsteczne – używane np. przez input meter.
+        Traktujemy Left jako "główne" wejście.
+        """
+        return self.get_selected_input_L_index()
 
     def get_selected_output_index(self):
         """Zwraca index urządzenia wyjściowego wybranego w output_combo."""
@@ -1008,6 +1057,15 @@ class SettingsPage(ctk.CTkFrame):
             if entry["label"] == selected:
                 return entry["index"]
         return None
+
+    def get_measurement_mode(self):
+        """Zwraca tryb pomiaru: 'Mono' lub 'Stereo'."""
+        try:
+            return self.measure_mode_combo.get()
+        except AttributeError:
+            # Na wszelki wypadek, gdyby combo nie istniało
+            return "Mono"
+
 
     def _on_smoothing_change(self, value):
         # Dynamiczne przerysowanie wykresu Magnitude
@@ -1161,16 +1219,21 @@ class AboutPage(ctk.CTkFrame):
         # ======================================================
 
         funkcje = (
-            "• Pomiar odpowiedzi impulsowej metodą ESS\n"
-            "• Automatyczna dekonwolucja w dziedzinie częstotliwości\n"
-            "• Eliminacja nieliniowych odpowiedzi harmonicznych\n"
-            "• Analiza IR (czasowa i częstotliwościowa)\n"
-            "• Zapis wyników do plików WAV (32-bit float)\n"
-            "• Kalibracja SPL z wykorzystaniem różowego szumu\n"
-            "• Konfiguracja urządzeń wejścia/wyjścia audio\n"
-            "• Generowanie syntetycznych IR\n"
-            "• Splot IR z sygnałem audio (moduł rozszerzalny)"
+            "• Pomiar odpowiedzi impulsowej metodą ESS (Exponential Sine Sweep)\n"
+            "• Obsługa pomiaru MONO oraz STEREO\n"
+            "• Stereo z dwoma niezależnymi wejściami (Input L / Input R)\n"
+            "• Możliwość pracy z dwoma różnymi urządzeniami wejściowymi jednocześnie\n"
+            "• Wspólna normalizacja IR dla kanałów L i R – niezbędna przy pomiarach HRTF\n"
+            "• Automatyczna dekonwolucja i rekonstrukcja IR\n"
+            "• Analiza IR w dziedzinie czasu i częstotliwości\n"
+            "• Wykresy z wyborem kanału (L / R) i dynamicznym oknem IR\n"
+            "• Zapis surowego nagrania oraz IR osobno dla kanałów L i R\n"
+            "• Kalibracja SPL z użyciem różowego szumu\n"
+            "• Konfigurowalny smoothing (Raw, 1/24, 1/12, 1/6, 1/3 okt.)\n"
+            "• Integracja z urządzeniami audio w czasie rzeczywistym\n"
+            "• Moduły rozszerzeń: generowanie IR, splot IR z audio"
         )
+
         add_section(tabs.tab("Funkcjonalności"), "Funkcjonalności", funkcje)
 
         # ======================================================
@@ -1178,20 +1241,31 @@ class AboutPage(ctk.CTkFrame):
         # ======================================================
 
         instrukcja = (
-            "1. Wybierz urządzenia audio w zakładce „Ustawienia”.\n"
-            "2. Ustaw sample rate (zalecane: 48 kHz) oraz buffer size.\n"
-            "3. Wykonaj kalibrację SPL przy użyciu różowego szumu.\n"
-            "4. Ustaw parametry sweepa i długość IR (≥ długość sweepa).\n"
-            "5. Rozpocznij pomiar. Aplikacja automatycznie wykona:\n"
-            "   • generację sweepa,\n"
-            "   • odtworzenie sygnału,\n"
-            "   • nagranie odpowiedzi,\n"
-            "   • dekonwolucję,\n"
-            "   • zapis IR oraz nagrania.\n\n"
-            "Wynikiem pomiaru są pliki:\n"
-            "• RECORDED_xxx.wav — nagranie sweepa,\n"
-            "• IR_xxx.wav — finalna odpowiedź impulsowa."
+            "1. Wejdź w zakładkę „Ustawienia” i wybierz urządzenia audio.\n"
+            "   • Input (Left) – lewy kanał pomiarowy\n"
+            "   • Input (Right) – prawy kanał pomiarowy\n"
+            "   • Możesz wybrać jedno urządzenie 2-kanałowe lub dwa różne urządzenia wejściowe\n\n"
+            "2. Wybierz tryb pomiaru:\n"
+            "   • MONO – używany jest tylko kanał Left\n"
+            "   • STEREO – program jednocześnie nagrywa Input L i Input R\n"
+            "     (idealne do pomiarów HRTF lub pomiarów dwukanałowych)\n\n"
+            "3. Ustaw parametry sweepa, sample rate i buffer size.\n"
+            "4. Wykonaj opcjonalną kalibrację SPL.\n"
+            "5. Naciśnij „Start measurement”.\n\n"
+            "Podczas pomiaru:\n"
+            "• Program generuje sweep\n"
+            "• Odtwarza sygnał na wyjściu\n"
+            "• Nagrywa kanał L i R równolegle\n"
+            "• Wykonuje dekonwolucję\n"
+            "• Normalizuje oba kanały tym samym współczynnikiem\n\n"
+            "Zapisane pliki:\n"
+            "• RECORDED_L_*.wav – nagranie surowe (lewy kanał)\n"
+            "• RECORDED_R_*.wav – nagranie surowe (prawy kanał)\n"
+            "• IR_L_*.wav – odpowiedź impulsowa lewego kanału\n"
+            "• IR_R_*.wav – odpowiedź impulsowa prawego kanału\n\n"
+            "Na wykresach możesz przełączać kanał (L / R) do podglądu IR i charakterystyki."
         )
+
         add_section(tabs.tab("Instrukcja pomiaru"), "Instrukcja pomiaru IR", instrukcja)
 
         # ======================================================
@@ -1234,15 +1308,20 @@ class AboutPage(ctk.CTkFrame):
 
         techniczne = (
             "• Algorytm pomiarowy: Exponential Sine Sweep (ESS)\n"
-            "• Dekonwolucja: FFT(recorded) × FFT(inverse sweep)\n"
-            "• Format audio: WAV 32-bit float, mono\n"
-            "• Biblioteki: numpy, sounddevice, soundfile, customtkinter, matplotlib\n"
+            "• Tryby pracy: MONO oraz STEREO\n"
+            "• Stereo:\n"
+            "   – obsługa dwóch wejść: Input L / Input R\n"
+            "   – możliwość korzystania z dwóch różnych urządzeń wejściowych\n"
+            "   – automatyczne wyrównanie długości nagrania\n"
+            "   – wspólna normalizacja IR dla kanałów L i R (wymagane przy HRTF)\n"
+            "• Dekonwolucja: widmowe odwracanie sweepa, FFT(recorded) × FFT(inverse)\n"
+            "• Windowing: fade-out oraz wyrównanie piku do t=0\n"
+            "• Format audio: WAV 32-bit float\n"
+            "• Wykresy: IR + Magnitude Response, smoothing do 1/24 okt.\n"
             "• Wymagania systemowe: Windows 10/11, Python 3.10+\n"
-            "• Zalecenia pomiarowe:\n"
-            "   – mikrofon pomiarowy\n"
-            "   – głośnik pełnopasmowy\n"
-            "   – niskoszumowe środowisko pomiarowe"
+            "• Biblioteki: numpy, sounddevice, soundfile, customtkinter, matplotlib"
         )
+
         add_section(tabs.tab("Informacje techniczne"), "Informacje techniczne", techniczne)
 
 
@@ -1261,20 +1340,27 @@ class EasyIResponseApp(ctk.CTk):
         settings_page = self.pages["settings"]
         return settings_page.get_ir_window_ms()
 
-
     def _safe_close(self):
-        """Bezpieczne zamknięcie aplikacji – zatrzymuje monitory i kończy mainloop bez destroy()."""
-
-        # 1. zatrzymaj input metera (jak masz)
+        # 1. Stop input meter
         try:
-            if hasattr(self, "pages") and "settings" in self.pages:
-                page = self.pages["settings"]
-                if hasattr(page, "input_monitor") and page.input_monitor:
-                    page.input_monitor.stop()
+            self.pages["settings"].stop_input_meter()
         except Exception:
             pass
 
-        # 2. anuluj after() które SAM utworzyłeś (np. w MeasurementPage czy innych stronach)
+        # 2. Stop pink noise + monitor wejścia z kalibracji
+        try:
+            self.pages["measurement"]._stop_pink_noise()
+        except Exception:
+            pass
+
+        # 3. Anuluj ewentualną animację slide (if any)
+        try:
+            if hasattr(self, "anim_after_id") and self.anim_after_id is not None:
+                self.after_cancel(self.anim_after_id)
+        except Exception:
+            pass
+
+        # 4. (opcjonalnie) Anuluj after() w stronach, jeśli kiedyś dodasz tam takie atrybuty
         try:
             if hasattr(self, "pages"):
                 for page in self.pages.values():
@@ -1286,11 +1372,8 @@ class EasyIResponseApp(ctk.CTk):
         except Exception:
             pass
 
-        # 3. ZAMIAST destroy:
-        #    - schowaj okno
-        #    - zatrzymaj pętlę zdarzeń Tkintera
-        self.withdraw()  # ukryj okno
-        self.quit()  # zatrzymaj mainloop / interpreter Tcl
+        # 5. Ostatecznie zamknij aplikację – JEDNO destroy, nic więcej
+        self.destroy()
 
     def __init__(self):
         super().__init__()
@@ -1415,13 +1498,20 @@ class EasyIResponseApp(ctk.CTk):
         """
         Zwraca słownik z ustawieniami audio dla pomiaru IR
         na podstawie zakładki 'Ustawienia pomiaru'.
+
+        Zawiera:
+        - input_device_L / input_device_R  – indexy wejść (Left / Right)
+        - input_device                      – alias na Left (dla SPL, input meter)
+        - input_channels                    – 1 (mono) lub 2 (stereo)
+        - measurement_mode                  – 'Mono' / 'Stereo'
         """
         settings_page: SettingsPage = self.pages["settings"]
 
-        in_idx = settings_page.get_selected_input_index()
+        in_L = settings_page.get_selected_input_L_index()
+        in_R = settings_page.get_selected_input_R_index()
         out_idx = settings_page.get_selected_output_index()
 
-        if in_idx is None or out_idx is None:
+        if in_L is None or out_idx is None:
             return None
 
         # sample rate
@@ -1436,12 +1526,41 @@ class EasyIResponseApp(ctk.CTk):
         except ValueError:
             buf = 256
 
+        # tryb pomiaru
+        mode = settings_page.get_measurement_mode()
+        mode_lower = str(mode).lower()
+        stereo = mode_lower.startswith("stereo")
+
+        # liczba kanałów z punktu widzenia measurement_engine
+        input_channels = 2 if stereo else 1
+
+        # Jeśli stereo i oba inputy to ten sam device → upewnij się, że ma ≥ 2 kanały
+        if stereo and in_L == in_R:
+            try:
+                dev_info = sd.query_devices(in_L)
+                max_in = int(dev_info.get("max_input_channels", 1))
+            except Exception:
+                max_in = 1
+
+            if max_in < 2:
+                show_error(
+                    f"Urządzenie wejściowe ma tylko {max_in} kanał(ów).\n"
+                    f"Nie można użyć go w trybie stereo jako źródła L/R.\n"
+                    f"Zmień urządzenie lub wybierz różne wejścia dla Left/Right."
+                )
+                return None
+
         return {
-            "input_device": in_idx,
+            "input_device": in_L,  # alias na Left – dla SPL / input metera
+            "input_device_L": in_L,
+            "input_device_R": in_R,
             "output_device": out_idx,
             "sample_rate": sr,
             "buffer_size": buf,
+            "input_channels": input_channels,
+            "measurement_mode": mode,
         }
+
     # ---------------- LOGIKA STRON + ANIMACJA ----------------
     def set_active_page(self, name: str, animate: bool = True):
         if name not in self.pages:
