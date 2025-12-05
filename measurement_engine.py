@@ -179,13 +179,34 @@ def playrec_sweeps_concat(sweep, fs, audio_cfg, repeats, extra_silence=1.0):
 
 
 
+def deconvolve_full(recorded, inverse_filter):
+    """
+    Dekonwolucja całego nagrania (bez przycinania i bez wyrównywania piku).
+    Używana do przypadku wielu sklejonych sweepów, aby otrzymać
+    ciąg IR-ów rozdzielonych w czasie.
+    """
+    recorded = np.asarray(recorded, dtype=np.float32)
+    inverse_filter = np.asarray(inverse_filter, dtype=np.float32)
+
+    n_conv = len(recorded) + len(inverse_filter) - 1
+
+    # najbliższa potęga 2 do FFT
+    nfft = 1
+    while nfft < n_conv:
+        nfft *= 2
+
+    R = np.fft.rfft(recorded, nfft)
+    I = np.fft.rfft(inverse_filter, nfft)
+    ir_full = np.fft.irfft(R * I, nfft)
+
+    return ir_full.astype(np.float32)
 
 
 
 def deconvolve_ir(recorded, inverse_filter, fs, ir_length_s):
     """
     Dekonwolucja (ESS * inverse filter) → IR.
-    Przycinamy do ir_length_s i robimy fade na końcu.
+    Przycinamy do ir_length_s
 
     Uwaga: TA FUNKCJA NIE NORMALIZUJE już IR.
     Normalizacja jest wykonywana na wyższym poziomie (w measure_ir),
@@ -293,6 +314,163 @@ def compute_mag_response(ir, fs):
 #     return smoothed
 
 
+# def measure_ir(params, audio_cfg):
+#     """
+#     Główna funkcja pomiaru IR.
+#
+#     params: dict
+#         {
+#           "sweep_length": float [s],
+#           "start_freq":   float [Hz],
+#           "end_freq":     float [Hz],
+#           "ir_length":    float [s],
+#           "fade_time":    float [s]
+#         }
+#
+#     audio_cfg: dict
+#         {
+#           "input_device":    int,
+#           "output_device":   int,
+#           "sample_rate":     int,
+#           "buffer_size":     int,
+#           "input_channels":  int (1 = mono, 2 = stereo)  [opcjonalne, domyślnie 1]
+#         }
+#
+#     Zwraca:
+#         ir        - numpy array:
+#                     mono:  (N,)
+#                     stereo:(N, 2)
+#         freqs     - numpy array [Hz]
+#         mag_db    - numpy array [dB]:
+#                     mono:  (F,)
+#                     stereo:(F, 2)
+#         recorded  - surowe nagranie z wejścia:
+#                     mono:  (N,)
+#                     stereo:(N, 2)
+#     """
+#     fs = int(audio_cfg["sample_rate"])
+#     channels_in = int(audio_cfg.get("input_channels", 1))
+#
+#     # 1) Sweep concat-safe wg Fariny (0 na początku i końcu)
+#     sweep = generate_exponential_sweep(
+#         fs,
+#         params["sweep_length"],
+#         params["start_freq"],
+#         params["end_freq"],
+#     )
+#     inv = generate_inverse_filter(
+#         sweep,
+#         fs,
+#         params["start_freq"],
+#         params["end_freq"],
+#     )
+#
+#     # 2) Liczba uśrednień (synchroniczne uśrednianie z okien)
+#     avg_count = int(params.get("averages", 1) or 1)
+#     if avg_count < 1:
+#         avg_count = 1
+#
+#     if avg_count == 1:
+#         # Klasyczny pomiar – pojedynczy sweep + cisza
+#         recorded = playrec_sweep(
+#             sweep,
+#             fs,
+#             audio_cfg,
+#             extra_silence=params["ir_length"]
+#         )
+#     else:
+#         # Concatenated sweeps: repeats = avg_count + 1 (pierwsze okno wyrzucamy)
+#         repeats = avg_count + 1
+#
+#         recorded_full = playrec_sweeps_concat(
+#             sweep,
+#             fs,
+#             audio_cfg,
+#             repeats=repeats,
+#             extra_silence=params["ir_length"]
+#         )
+#         recorded_full = np.asarray(recorded_full, dtype=np.float32)
+#
+#         n_sweep = len(sweep)
+#         total_needed = repeats * n_sweep
+#
+#         if recorded_full.ndim == 1:
+#             # MONO
+#             if len(recorded_full) < total_needed:
+#                 raise RuntimeError("Nagranie jest krótsze niż oczekiwana liczba sweepów (mono).")
+#
+#             rec_trim = recorded_full[:total_needed]
+#             windows = rec_trim.reshape(repeats, n_sweep)  # (repeats, N)
+#             useful = windows[1:, :]  # wyrzucamy pierwsze okno
+#             recorded = useful.mean(axis=0).astype(np.float32)  # (N,)
+#         else:
+#             # STEREO / wielokanałowe
+#             if recorded_full.shape[0] < total_needed:
+#                 raise RuntimeError("Nagranie jest krótsze niż oczekiwana liczba sweepów (stereo).")
+#
+#             n_ch = recorded_full.shape[1]
+#             rec_trim = recorded_full[:total_needed, :]  # (repeats*N, n_ch)
+#             windows = rec_trim.reshape(repeats, n_sweep, n_ch)  # (repeats, N, n_ch)
+#             useful = windows[1:, :, :]  # wyrzucamy pierwsze okno
+#             recorded = useful.mean(axis=0).astype(np.float32)  # (N, n_ch)
+#
+#     # --- MONO ---
+#     if recorded.ndim == 1 or channels_in == 1:
+#         if recorded.ndim > 1:
+#             recorded_mono = recorded[:, 0]
+#         else:
+#             recorded_mono = recorded
+#
+#         ir = deconvolve_ir(
+#             recorded_mono,
+#             inv,
+#             fs,
+#             params["ir_length"],
+#         )
+#
+#         # normalizacja pojedynczego kanału
+#         max_val = np.max(np.abs(ir)) + 1e-12
+#         ir = (ir / max_val).astype(np.float32)
+#
+#         freqs, mag_db = compute_mag_response(ir, fs)
+#         return ir, freqs, mag_db, recorded_mono
+#
+#     # --- STEREO (lub więcej kanałów) ---
+#     if recorded.ndim == 1:
+#         # awaryjnie traktujemy to jako 1 kanał, choć konfiguracja mówi co innego
+#         recorded = recorded.reshape(-1, 1)
+#
+#     n_ch = recorded.shape[1]
+#
+#     ir_list = []
+#     for ch in range(n_ch):
+#         ir_ch = deconvolve_ir(
+#             recorded[:, ch],
+#             inv,
+#             fs,
+#             params["ir_length"],
+#             params["fade_time"],
+#         )
+#         ir_list.append(ir_ch)
+#
+#     # zakładamy tę samą długość wszystkich kanałów
+#     min_len = min(len(x) for x in ir_list)
+#     ir_array = np.stack([x[:min_len] for x in ir_list], axis=1)  # (N, n_ch)
+#
+#     # WSPÓLNA NORMALIZACJA DLA WSZYSTKICH KANAŁÓW (L/R itd.)
+#     max_val = np.max(np.abs(ir_array)) + 1e-12
+#     ir_array = (ir_array / max_val).astype(np.float32)
+#
+#     # Charakterystyki amplitudowe dla każdego kanału
+#     freqs, mag0 = compute_mag_response(ir_array[:, 0], fs)
+#     mag_db = np.empty((len(freqs), n_ch), dtype=np.float32)
+#     mag_db[:, 0] = mag0
+#     for ch in range(1, n_ch):
+#         _, mag_c = compute_mag_response(ir_array[:, ch], fs)
+#         mag_db[:, ch] = mag_c
+#
+#     return ir_array, freqs, mag_db, recorded
+
 def measure_ir(params, audio_cfg):
     """
     Główna funkcja pomiaru IR.
@@ -303,7 +481,7 @@ def measure_ir(params, audio_cfg):
           "start_freq":   float [Hz],
           "end_freq":     float [Hz],
           "ir_length":    float [s],
-          "fade_time":    float [s]
+          "averages":     int   [liczba uśrednień]
         }
 
     audio_cfg: dict
@@ -312,31 +490,29 @@ def measure_ir(params, audio_cfg):
           "output_device":   int,
           "sample_rate":     int,
           "buffer_size":     int,
-          "input_channels":  int (1 = mono, 2 = stereo)  [opcjonalne, domyślnie 1]
+          "input_channels":  int (opcjonalne; domyślnie 1)
         }
 
     Zwraca:
-        ir        - numpy array:
-                    mono:  (N,)
-                    stereo:(N, 2)
-        freqs     - numpy array [Hz]
-        mag_db    - numpy array [dB]:
-                    mono:  (F,)
-                    stereo:(F, 2)
-        recorded  - surowe nagranie z wejścia:
-                    mono:  (N,)
-                    stereo:(N, 2)
+        ir        - IR (mono: N, stereo: N×2)
+        freqs     - częstotliwości FFT
+        mag_db    - charakterystyka magnitude
+        recorded  - surowe nagranie
     """
+
     fs = int(audio_cfg["sample_rate"])
     channels_in = int(audio_cfg.get("input_channels", 1))
 
-    # 1) Sweep concat-safe wg Fariny (0 na początku i końcu)
+    # -------------------------
+    # 1) Generacja sweepa i inverse filter
+    # -------------------------
     sweep = generate_exponential_sweep(
         fs,
         params["sweep_length"],
         params["start_freq"],
         params["end_freq"],
     )
+
     inv = generate_inverse_filter(
         sweep,
         fs,
@@ -344,111 +520,174 @@ def measure_ir(params, audio_cfg):
         params["end_freq"],
     )
 
-    # 2) Liczba uśrednień (synchroniczne uśrednianie z okien)
-    avg_count = int(params.get("averages", 1) or 1)
-    if avg_count < 1:
-        avg_count = 1
+    sweep_len_s = float(params["sweep_length"])
+    sweep_samp = len(sweep)
+    ir_length_s = float(params["ir_length"])
+    ir_block_samp = int(ir_length_s * fs)
+    avg_count = max(1, int(params.get("averages", 1)))
 
+    # --------------------------------------------------
+    # PRZYPADEK 1: BEZ UŚREDNIANIA
+    # --------------------------------------------------
     if avg_count == 1:
-        # Klasyczny pomiar – pojedynczy sweep + cisza
         recorded = playrec_sweep(
             sweep,
             fs,
             audio_cfg,
-            extra_silence=params["ir_length"]
+            extra_silence=ir_length_s,
         )
-    else:
-        # Concatenated sweeps: repeats = avg_count + 1 (pierwsze okno wyrzucamy)
-        repeats = avg_count + 1
 
-        recorded_full = playrec_sweeps_concat(
-            sweep,
-            fs,
-            audio_cfg,
-            repeats=repeats,
-            extra_silence=params["ir_length"]
-        )
-        recorded_full = np.asarray(recorded_full, dtype=np.float32)
+        # MONO
+        if channels_in == 1 or (np.ndim(recorded) == 1):
+            rec_mono = recorded[:, 0] if np.ndim(recorded) > 1 else recorded
 
-        n_sweep = len(sweep)
-        total_needed = repeats * n_sweep
+            ir = deconvolve_ir(rec_mono, inv, fs, ir_length_s)
 
-        if recorded_full.ndim == 1:
-            # MONO
-            if len(recorded_full) < total_needed:
-                raise RuntimeError("Nagranie jest krótsze niż oczekiwana liczba sweepów (mono).")
+            # # wyrównanie finalne
+            # peak = int(np.argmax(np.abs(ir)))
+            # ir = np.roll(ir, -peak)
 
-            rec_trim = recorded_full[:total_needed]
-            windows = rec_trim.reshape(repeats, n_sweep)  # (repeats, N)
-            useful = windows[1:, :]  # wyrzucamy pierwsze okno
-            recorded = useful.mean(axis=0).astype(np.float32)  # (N,)
+            # normalizacja
+            ir /= (np.max(np.abs(ir)) + 1e-12)
+
+            freqs, mag_db = compute_mag_response(ir, fs)
+            return ir.astype(np.float32), freqs, mag_db, rec_mono
+
+        # STEREO
+        rec_arr = np.asarray(recorded, dtype=np.float32)
+        if rec_arr.ndim == 1:
+            rec_arr = rec_arr.reshape(-1, 1)
+
+        ir_list = []
+        for ch in range(rec_arr.shape[1]):
+            ir_ch = deconvolve_ir(rec_arr[:, ch], inv, fs, ir_length_s)
+            ir_list.append(ir_ch)
+
+        min_len = min(len(x) for x in ir_list)
+        ir_array = np.stack([x[:min_len] for x in ir_list], axis=1)
+
+        # pojedyncze wyrównanie i normalizacja
+        peak = int(np.argmax(np.abs(ir_array[:, 0])))
+        ir_array = np.roll(ir_array, -peak, axis=0)
+        ir_array /= (np.max(np.abs(ir_array)) + 1e-12)
+
+        freqs, mag0 = compute_mag_response(ir_array[:, 0], fs)
+        mag_db = np.zeros((len(freqs), ir_array.shape[1]), dtype=np.float32)
+        mag_db[:, 0] = mag0
+        for ch in range(1, ir_array.shape[1]):
+            _, mag_db[:, ch] = compute_mag_response(ir_array[:, ch], fs)
+
+        return ir_array.astype(np.float32), freqs, mag_db, rec_arr
+
+    # --------------------------------------------------
+    # PRZYPADEK 2: UŚREDNIANIE (avg_count > 1)
+    # METODA FARINY – DEKONWOLUCJA CAŁEGO NAGRANIA
+    # --------------------------------------------------
+
+    repeats = avg_count + 1   # pierwsze IR wyrzucamy
+
+    recorded_full = playrec_sweeps_concat(
+        sweep,
+        fs,
+        audio_cfg,
+        repeats=repeats,
+        extra_silence=ir_length_s,
+    )
+
+    recorded_full = np.asarray(recorded_full, dtype=np.float32)
+
+    # ------------------ MONO ------------------
+    if channels_in == 1 or recorded_full.ndim == 1:
+        rec_mono = recorded_full[:, 0] if recorded_full.ndim > 1 else recorded_full
+
+        ir_full = deconvolve_full(rec_mono, inv)
+
+        n_total = len(ir_full)
+        max_blocks = (n_total - ir_block_samp) // sweep_samp
+        num_blocks = min(max_blocks, repeats)
+
+        ir_blocks = []
+
+        # wycinanie IR-ów BEZ przesuwania
+        for k in range(1, num_blocks):
+            start = k * sweep_samp
+            end = start + ir_block_samp
+            if end > n_total:
+                break
+            seg = ir_full[start:end].astype(np.float32)
+            ir_blocks.append(seg)
+
+        if not ir_blocks:
+            ir = deconvolve_ir(rec_mono, inv, fs, ir_length_s)
         else:
-            # STEREO / wielokanałowe
-            if recorded_full.shape[0] < total_needed:
-                raise RuntimeError("Nagranie jest krótsze niż oczekiwana liczba sweepów (stereo).")
+            min_len = min(len(x) for x in ir_blocks)
+            ir_stack = np.stack([x[:min_len] for x in ir_blocks], axis=0)
+            ir = ir_stack.mean(axis=0).astype(np.float32)
 
-            n_ch = recorded_full.shape[1]
-            rec_trim = recorded_full[:total_needed, :]  # (repeats*N, n_ch)
-            windows = rec_trim.reshape(repeats, n_sweep, n_ch)  # (repeats, N, n_ch)
-            useful = windows[1:, :, :]  # wyrzucamy pierwsze okno
-            recorded = useful.mean(axis=0).astype(np.float32)  # (N, n_ch)
+        # jedno wyrównanie finalnej IR
+        peak = int(np.argmax(np.abs(ir)))
+        ir = np.roll(ir, -peak)
 
-    # --- MONO ---
-    if recorded.ndim == 1 or channels_in == 1:
-        if recorded.ndim > 1:
-            recorded_mono = recorded[:, 0]
-        else:
-            recorded_mono = recorded
-
-        ir = deconvolve_ir(
-            recorded_mono,
-            inv,
-            fs,
-            params["ir_length"],
-        )
-
-        # normalizacja pojedynczego kanału
-        max_val = np.max(np.abs(ir)) + 1e-12
-        ir = (ir / max_val).astype(np.float32)
+        # normalizacja
+        ir /= (np.max(np.abs(ir)) + 1e-12)
 
         freqs, mag_db = compute_mag_response(ir, fs)
-        return ir, freqs, mag_db, recorded_mono
+        return ir.astype(np.float32), freqs, mag_db, rec_mono
 
-    # --- STEREO (lub więcej kanałów) ---
-    if recorded.ndim == 1:
-        # awaryjnie traktujemy to jako 1 kanał, choć konfiguracja mówi co innego
-        recorded = recorded.reshape(-1, 1)
+    # ------------------ STEREO ------------------
+    rec_arr = recorded_full
+    if rec_arr.ndim == 1:
+        rec_arr = rec_arr.reshape(-1, 1)
 
-    n_ch = recorded.shape[1]
+    n_ch = rec_arr.shape[1]
+    ir_channels = []
 
-    ir_list = []
     for ch in range(n_ch):
-        ir_ch = deconvolve_ir(
-            recorded[:, ch],
-            inv,
-            fs,
-            params["ir_length"],
-            params["fade_time"],
-        )
-        ir_list.append(ir_ch)
+        rec_ch = rec_arr[:, ch]
+        ir_full_ch = deconvolve_full(rec_ch, inv)
 
-    # zakładamy tę samą długość wszystkich kanałów
-    min_len = min(len(x) for x in ir_list)
-    ir_array = np.stack([x[:min_len] for x in ir_list], axis=1)  # (N, n_ch)
+        n_total = len(ir_full_ch)
+        max_blocks = (n_total - ir_block_samp) // sweep_samp
+        num_blocks = min(max_blocks, repeats)
 
-    # WSPÓLNA NORMALIZACJA DLA WSZYSTKICH KANAŁÓW (L/R itd.)
-    max_val = np.max(np.abs(ir_array)) + 1e-12
-    ir_array = (ir_array / max_val).astype(np.float32)
+        blocks = []
 
-    # Charakterystyki amplitudowe dla każdego kanału
+        for k in range(1, num_blocks):
+            start = k * sweep_samp
+            end = start + ir_block_samp
+            if end > n_total:
+                break
+
+            seg = ir_full_ch[start:end].astype(np.float32)
+            blocks.append(seg)
+
+        if not blocks:
+            ir_ch = deconvolve_ir(rec_ch, inv, fs, ir_length_s)
+        else:
+            min_len_ch = min(len(x) for x in blocks)
+            stack_ch = np.stack([x[:min_len_ch] for x in blocks], axis=0)
+            ir_ch = stack_ch.mean(axis=0).astype(np.float32)
+
+        ir_channels.append(ir_ch)
+
+    # wyrównanie finalne do piku pierwszego kanału
+    min_len = min(len(x) for x in ir_channels)
+    ir_array = np.stack([x[:min_len] for x in ir_channels], axis=1)
+
+    peak = int(np.argmax(np.abs(ir_array[:, 0])))
+    ir_array = np.roll(ir_array, -peak, axis=0)
+
+    ir_array /= (np.max(np.abs(ir_array)) + 1e-12)
+
+    # magnitude
     freqs, mag0 = compute_mag_response(ir_array[:, 0], fs)
-    mag_db = np.empty((len(freqs), n_ch), dtype=np.float32)
+    mag_db = np.zeros((len(freqs), n_ch), dtype=np.float32)
     mag_db[:, 0] = mag0
-    for ch in range(1, n_ch):
-        _, mag_c = compute_mag_response(ir_array[:, ch], fs)
-        mag_db[:, ch] = mag_c
 
-    return ir_array, freqs, mag_db, recorded
+    for ch in range(1, n_ch):
+        _, mag_db[:, ch] = compute_mag_response(ir_array[:, ch], fs)
+
+    return ir_array.astype(np.float32), freqs, mag_db, rec_arr
 
 
 
