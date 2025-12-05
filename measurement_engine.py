@@ -47,7 +47,7 @@ def generate_exponential_sweep(fs, duration, f_start, f_end):
     sweep = np.sin(K * (np.exp(L * t) - 1.0))
 
     # 🔥 Minimalny fade-in + fade-out (po 1 ms)
-    fade_len = int(fs * 0.005)  # 1 ms
+    fade_len = int(fs * 0.005)  # 5 ms
     if fade_len > 1:
         window = np.ones_like(sweep)
         # fade-in
@@ -502,6 +502,7 @@ def measure_ir(params, audio_cfg):
 
     fs = int(audio_cfg["sample_rate"])
     channels_in = int(audio_cfg.get("input_channels", 1))
+    mode = params.get("mode", "single")
 
     # -------------------------
     # 1) Generacja sweepa i inverse filter
@@ -525,6 +526,23 @@ def measure_ir(params, audio_cfg):
     ir_length_s = float(params["ir_length"])
     ir_block_samp = int(ir_length_s * fs)
     avg_count = max(1, int(params.get("averages", 1)))
+
+    # ------------------------
+    # TRYB SINGLE
+    # ------------------------
+    if mode == "single":
+        avg_count = 1  # zawsze 1
+
+    # ------------------------
+    # TRYB AVERAGING FARINA
+    # ------------------------
+    elif mode == "average":
+        # IR length musi być równe sweep length
+        ir_length_s = sweep_len_s
+        # wymuszenie poprawnej wartości
+        params["ir_length"] = sweep_len_s
+        # Averaging musi być >= 2
+        avg_count = max(2, avg_count)
 
     # --------------------------------------------------
     # PRZYPADEK 1: BEZ UŚREDNIANIA
@@ -584,6 +602,11 @@ def measure_ir(params, audio_cfg):
     # METODA FARINY – DEKONWOLUCJA CAŁEGO NAGRANIA
     # --------------------------------------------------
 
+    if mode == "average":
+        ir_block_samp = sweep_samp
+    else:
+        ir_block_samp = int(ir_length_s * fs)
+
     repeats = avg_count + 1   # pierwsze IR wyrzucamy
 
     recorded_full = playrec_sweeps_concat(
@@ -591,7 +614,7 @@ def measure_ir(params, audio_cfg):
         fs,
         audio_cfg,
         repeats=repeats,
-        extra_silence=ir_length_s,
+        extra_silence=0.0,
     )
 
     recorded_full = np.asarray(recorded_full, dtype=np.float32)

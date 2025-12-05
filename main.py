@@ -117,6 +117,7 @@ class ToolTip:
             self.tip_window = None
 
 
+
 class MeasurementPage(ctk.CTkFrame):
     def __init__(self, parent, controller):
         super().__init__(parent)
@@ -198,6 +199,26 @@ class MeasurementPage(ctk.CTkFrame):
         )
 
         self.avg_count = self._make_param(left, "Uśrednianie (liczba uśrednień):", "1")
+
+        ctk.CTkLabel(left, text="Tryb pomiaru:", font=("Arial", 16, "bold")).pack(anchor="w", pady=(15, 5))
+
+        self.measure_mode_var = ctk.StringVar(value="single")
+
+        self.mode_single = ctk.CTkRadioButton(
+            left, text="Single sweep",
+            variable=self.measure_mode_var, value="single",
+            command=self._on_mode_change
+        )
+        self.mode_single.pack(anchor="w", pady=(5, 5))
+
+        self.mode_avg = ctk.CTkRadioButton(
+            left, text="Averaging (Farina)",
+            variable=self.measure_mode_var, value="average",
+            command=self._on_mode_change
+        )
+        self.mode_avg.pack(anchor="w", pady=(5, 5))
+
+        self._on_mode_change()
 
         # ---------- Folder zapisu IR ----------
         ctk.CTkLabel(left, text="Folder zapisu IR:", font=("Arial", 18, "bold")).pack(anchor="w", pady=(20, 5))
@@ -301,6 +322,40 @@ class MeasurementPage(ctk.CTkFrame):
         self.canvas_widget.pack(fill="both", expand=True)
 
         self._clear_plots()
+
+    def _on_mode_change(self):
+        mode = self.measure_mode_var.get()
+        sweep_len = float(self.sweep_length.get())
+
+        if mode == "average":
+            # --- IR length = sweep ---
+            self.ir_length.configure(state="normal")
+            self.ir_length.delete(0, "end")
+            self.ir_length.insert(0, str(sweep_len))
+            self.ir_length.configure(state="disabled")
+
+            # --- Averages odblokowane ---
+            self.avg_count.configure(state="normal")
+
+            # minimalnie 2
+            try:
+                avg = int(self.avg_count.get())
+            except:
+                avg = 1
+
+            if avg < 2:
+                self.avg_count.delete(0, "end")
+                self.avg_count.insert(0, "2")
+
+        else:  # SINGLE SWEEP
+            # --- IR length w pełni odblokowane ---
+            self.ir_length.configure(state="normal")
+
+            # --- USTAW AVERAGES = 1 (właściwa kolejność!) ---
+            self.avg_count.configure(state="normal")  # <- krok 1
+            self.avg_count.delete(0, "end")  # <- krok 2
+            self.avg_count.insert(0, "1")  # <- krok 3
+            self.avg_count.configure(state="disabled")  # <- krok 4
 
     def update_plots(self):
         """Aktualizuje wykresy bazując na ostatnim pomiarze (mono lub stereo)."""
@@ -574,6 +629,8 @@ class MeasurementPage(ctk.CTkFrame):
             "ir_length": ir_len,
             "averages": avg_count,
         }
+
+        params["mode"] = self.measure_mode_var.get()
 
         # 4. UI: czyścimy wykresy, blokujemy przycisk
         self._clear_plots()
