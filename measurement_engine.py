@@ -5,52 +5,61 @@ import sounddevice as sd
 
 
 
+# def generate_exponential_sweep(fs, duration, f_start, f_end):
+#     if f_start <= 0:
+#         raise ValueError("f_start musi być > 0 Hz")
+#     R = float(f_end) / float(f_start)
+#
+#     n_samples = int(fs * duration)
+#     t = np.linspace(0.0, duration, n_samples, endpoint=False)
+#
+#     K = duration * 2.0 * np.pi * f_start / np.log(R)
+#     L = np.log(R) / duration
+#
+#     sweep = np.sin(K * (np.exp(L * t) - 1.0))
+#
+#     # Normalizacja
+#     sweep /= np.max(np.abs(sweep)) + 1e-12
+#
+#     # 🔥 KLUCZOWE: twarde ustawienie początku i końca w zero
+#     sweep[0] = 0.0
+#     sweep[-1] = 0.0
+#
+#     # 🔥 DODATKOWY KRÓTKI FADE-OUT NA KOŃCU (zapobiega klikom)
+#     fade_len = int(fs * 0.005)   # 5 ms
+#     window = np.ones_like(sweep)
+#     window[-fade_len:] = np.linspace(1.0, 0.0, fade_len)
+#     sweep *= window
+#
+#     return sweep.astype(np.float32)
+
 def generate_exponential_sweep(fs, duration, f_start, f_end):
     if f_start <= 0:
         raise ValueError("f_start musi być > 0 Hz")
 
-    R = f_end / f_start
+    R = float(f_end) / float(f_start)
     n_samples = int(fs * duration)
-    t = np.linspace(0, duration, n_samples, endpoint=False)
+    t = np.linspace(0.0, duration, n_samples, endpoint=False)
 
-    K = duration * 2 * np.pi * f_start / np.log(R)
+    K = duration * 2.0 * np.pi * f_start / np.log(R)
     L = np.log(R) / duration
 
     sweep = np.sin(K * (np.exp(L * t) - 1.0))
 
-    # --- Normalizacja (0 dBFS) ---
-    sweep /= (np.max(np.abs(sweep)) + 1e-12)
+    # 🔥 Minimalny fade-in + fade-out (po 1 ms)
+    fade_len = int(fs * 0.005)  # 1 ms
+    if fade_len > 1:
+        window = np.ones_like(sweep)
+        # fade-in
+        window[:fade_len] = np.linspace(0.0, 1.0, fade_len)
+        # fade-out
+        window[-fade_len:] = np.linspace(1.0, 0.0, fade_len)
+        sweep *= window
 
-    # --- Obniżenie poziomu do -3 dbfs ---
-    sweep *= 10 ** (-3 / 20)   # ≈ 0.70794578
-
-    # --- Szukanie ostatniego przejścia przez zero ---
-    # patrzymy na znak kolejnych próbek
-    signs = np.sign(sweep)
-    zero_cross = None
-
-    for i in range(len(signs) - 2, 0, -1):
-        if signs[i] == 0:
-            zero_cross = i
-            break
-        if signs[i] != signs[i+1]:
-            zero_cross = i+1
-            break
-
-    if zero_cross is None:
-        zero_cross = len(sweep) - 1
-
-    # --- Ucięcie sweepa w miejscu zero-cross ---
-    sweep = sweep[:zero_cross]
-    # Dodanie próbki 0, aby zakończyć sygnał perfekcyjnie
-    sweep = np.concatenate([sweep, np.zeros(1, dtype=np.float32)])
-
-    # --- Wymuszenie pierwszej próbki 0 — zgodnie z wymaganiami metody Fariny ---
-    sweep[0] = 0.0
+    # normalizacja
+    sweep /= np.max(np.abs(sweep)) + 1e-12
 
     return sweep.astype(np.float32)
-
-
 
 
 
@@ -173,7 +182,7 @@ def playrec_sweeps_concat(sweep, fs, audio_cfg, repeats, extra_silence=1.0):
 
 
 
-def deconvolve_ir(recorded, inverse_filter, fs, ir_length_s, fade_time_s):
+def deconvolve_ir(recorded, inverse_filter, fs, ir_length_s):
     """
     Dekonwolucja (ESS * inverse filter) → IR.
     Przycinamy do ir_length_s i robimy fade na końcu.
@@ -202,6 +211,7 @@ def deconvolve_ir(recorded, inverse_filter, fs, ir_length_s, fade_time_s):
     # 1. Przesunięcie impulsu do t=0 (direct sound)
     peak = np.argmax(np.abs(ir))
     ir = np.roll(ir, -peak)
+
 
     return ir.astype(np.float32)
 
@@ -395,7 +405,6 @@ def measure_ir(params, audio_cfg):
             inv,
             fs,
             params["ir_length"],
-            params["fade_time"],
         )
 
         # normalizacja pojedynczego kanału

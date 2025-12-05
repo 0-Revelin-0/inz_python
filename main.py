@@ -197,7 +197,6 @@ class MeasurementPage(ctk.CTkFrame):
             "≤ długości sweepa, aby uniknąć aliasingu ogona."
         )
 
-        self.fade_time = self._make_param(left, "Fade [s]:", "0.05")
         self.avg_count = self._make_param(left, "Uśrednianie (liczba uśrednień):", "1")
 
         # ---------- Folder zapisu IR ----------
@@ -514,7 +513,6 @@ class MeasurementPage(ctk.CTkFrame):
             start_f = float(self.start_freq.get())
             end_f = float(self.end_freq.get())
             ir_len = float(self.ir_length.get())
-            fade = float(self.fade_time.get())
             avg_count = int(self.avg_count.get())
         except ValueError:
             show_error("Błędne parametry pomiaru.\nSprawdź, czy wszystkie pola są liczbami.")
@@ -574,7 +572,6 @@ class MeasurementPage(ctk.CTkFrame):
             "start_freq": start_f,
             "end_freq": end_f,
             "ir_length": ir_len,
-            "fade_time": fade,
             "averages": avg_count,
         }
 
@@ -943,8 +940,12 @@ class SettingsPage(ctk.CTkFrame):
 
         # Smoothing
         ctk.CTkLabel(frame, text="Smoothing:").grid(row=row_i, column=0, padx=10, pady=5, sticky="w")
-        self.smoothing_combo = ctk.CTkComboBox(frame, values=["Raw", "1/24", "1/12", "1/6", "1/3"])
-        self.smoothing_combo.set("Raw")
+        self.smoothing_combo = ctk.CTkComboBox(
+            frame,
+            values=["Raw", "1/24", "1/12", "1/6", "1/3"],
+            command=self._on_smoothing_change
+        )
+        self.smoothing_combo.set("1/6")
         self.smoothing_combo.grid(row=row_i, column=1, padx=10, pady=5, sticky="ew")
         row_i += 1
 
