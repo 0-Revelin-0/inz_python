@@ -187,6 +187,8 @@ class MeasurementPage(ctk.CTkFrame):
         ctk.CTkLabel(left, text="Parametry pomiaru:", font=("Arial", 18, "bold")).pack(anchor="w", pady=(20, 10))
 
         self.sweep_length = self._make_param(left, "Długość sweepa [s]:", "5")
+        self.sweep_length.bind("<KeyRelease>", self._on_sweep_change)
+
         self.start_freq = self._make_param(left, "Start freq [Hz]:", "100")
         self.end_freq = self._make_param(left, "End freq [Hz]:", "10000")
         self.ir_length = self._make_param(left, "Długość IR [s]:", "8")
@@ -328,34 +330,49 @@ class MeasurementPage(ctk.CTkFrame):
         sweep_len = float(self.sweep_length.get())
 
         if mode == "average":
-            # --- IR length = sweep ---
+            # --- IR length = sweep (wymuszone) ---
             self.ir_length.configure(state="normal")
             self.ir_length.delete(0, "end")
             self.ir_length.insert(0, str(sweep_len))
             self.ir_length.configure(state="disabled")
 
-            # --- Averages odblokowane ---
+            # --- averages odblokowane, minimum 2 ---
             self.avg_count.configure(state="normal")
-
-            # minimalnie 2
             try:
                 avg = int(self.avg_count.get())
             except:
                 avg = 1
-
             if avg < 2:
                 self.avg_count.delete(0, "end")
                 self.avg_count.insert(0, "2")
 
         else:  # SINGLE SWEEP
-            # --- IR length w pełni odblokowane ---
+            # --- IR length edytowalne, NIE nadpisujemy go! ---
             self.ir_length.configure(state="normal")
 
-            # --- USTAW AVERAGES = 1 (właściwa kolejność!) ---
-            self.avg_count.configure(state="normal")  # <- krok 1
-            self.avg_count.delete(0, "end")  # <- krok 2
-            self.avg_count.insert(0, "1")  # <- krok 3
-            self.avg_count.configure(state="disabled")  # <- krok 4
+            # --- averages = 1 + blokada ---
+            self.avg_count.configure(state="normal")
+            self.avg_count.delete(0, "end")
+            self.avg_count.insert(0, "1")
+            self.avg_count.configure(state="disabled")
+
+    def _on_sweep_change(self, event=None):
+        """Aktualizacja IR length tylko w trybie AVERAGING."""
+
+        mode = self.measure_mode_var.get()
+        if mode != "average":
+            return  # w trybie single nie zmieniamy nic
+
+        try:
+            new_len = float(self.sweep_length.get())
+        except ValueError:
+            return
+
+        # Ustawiamy IR = sweep length (mimo że IR jest disabled)
+        self.ir_length.configure(state="normal")
+        self.ir_length.delete(0, "end")
+        self.ir_length.insert(0, str(new_len))
+        self.ir_length.configure(state="disabled")
 
     def update_plots(self):
         """Aktualizuje wykresy bazując na ostatnim pomiarze (mono lub stereo)."""
