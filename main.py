@@ -1,6 +1,7 @@
 from tkinter import filedialog
 import customtkinter as ctk
 import sounddevice as sd
+import tkinter as tk
 import threading
 import numpy as np
 import os
@@ -65,6 +66,56 @@ def show_error(message: str):
 # =====================================================================
 #  POMIAR ODPOWIEDZI IMPULSOWEJ — MeasurementPage
 # =====================================================================
+
+class ToolTip:
+    def __init__(self, widget, text, delay=600):
+        self.widget = widget
+        self.text = text
+        self.delay = delay
+        self.tip_window = None
+        self.after_id = None
+
+        widget.bind("<Enter>", self.schedule)
+        widget.bind("<Leave>", self.hide)
+
+    def schedule(self, event=None):
+        self.after_id = self.widget.after(self.delay, self.show)
+
+    def show(self, event=None):
+        if self.tip_window is not None:
+            return
+
+        # pozycjonowanie tooltipa względem widgetu
+        x, y, _, _ = self.widget.bbox("insert")
+        x += self.widget.winfo_rootx() + 20
+        y += self.widget.winfo_rooty() + 20
+
+        # okno tooltipa
+        self.tip_window = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+
+        label = tk.Label(
+            tw,
+            text=self.text,
+            background="#222222",
+            foreground="white",
+            relief="solid",
+            borderwidth=1,
+            padx=6,
+            pady=4,
+            font=("Arial", 11)
+        )
+        label.pack()
+
+    def hide(self, event=None):
+        if self.after_id:
+            self.widget.after_cancel(self.after_id)
+            self.after_id = None
+        if self.tip_window:
+            self.tip_window.destroy()
+            self.tip_window = None
+
 
 class MeasurementPage(ctk.CTkFrame):
     def __init__(self, parent, controller):
@@ -138,7 +189,16 @@ class MeasurementPage(ctk.CTkFrame):
         self.start_freq = self._make_param(left, "Start freq [Hz]:", "100")
         self.end_freq = self._make_param(left, "End freq [Hz]:", "10000")
         self.ir_length = self._make_param(left, "Długość IR [s]:", "8")
+
+        ToolTip(
+            self.ir_length,
+            "Długość odpowiedzi impulsowej.\n"
+            "W trybie uśredniania (averages > 1) IR musi być\n"
+            "≤ długości sweepa, aby uniknąć aliasingu ogona."
+        )
+
         self.fade_time = self._make_param(left, "Fade [s]:", "0.05")
+        self.avg_count = self._make_param(left, "Uśrednianie (liczba uśrednień):", "1")
 
         # ---------- Folder zapisu IR ----------
         ctk.CTkLabel(left, text="Folder zapisu IR:", font=("Arial", 18, "bold")).pack(anchor="w", pady=(20, 5))
@@ -455,9 +515,21 @@ class MeasurementPage(ctk.CTkFrame):
             end_f = float(self.end_freq.get())
             ir_len = float(self.ir_length.get())
             fade = float(self.fade_time.get())
+            avg_count = int(self.avg_count.get())
         except ValueError:
             show_error("Błędne parametry pomiaru.\nSprawdź, czy wszystkie pola są liczbami.")
             return
+
+        # Po parsowaniu sweep_len, start_f, end_f, ir_len, fade, avg_count
+
+        if start_f <= 0:
+            show_error("Start freq musi być > 0 Hz.")
+            return
+
+        if avg_count < 1:
+            avg_count = 1
+            self.avg_count.delete(0, "end")
+            self.avg_count.insert(0, "1")
 
         # Zabezpieczenie: IR nie krótsza niż sweep
         if ir_len < sweep_len:
@@ -469,6 +541,16 @@ class MeasurementPage(ctk.CTkFrame):
                 text="Długość IR była krótsza niż sweep.\nUstawiono IR = długość sweepa."
             )
 
+        # Zabezpieczenie teoretyczne: przy averages > 1
+        # IR nie może być dłuższa niż sweep (inaczej aliasing ogona IR)
+        if avg_count > 1 and ir_len > sweep_len:
+            ir_len = sweep_len
+            self.ir_length.delete(0, "end")
+            self.ir_length.insert(0, str(sweep_len))
+            self.status_label.configure(
+                text="Przy uśrednianiu IR nie może być dłuższa niż sweep.\n"
+                     "Ustawiono IR = długość sweepa."
+            )
 
         # sanity check
         if end_f <= start_f:
@@ -493,6 +575,7 @@ class MeasurementPage(ctk.CTkFrame):
             "end_freq": end_f,
             "ir_length": ir_len,
             "fade_time": fade,
+            "averages": avg_count,
         }
 
         # 4. UI: czyścimy wykresy, blokujemy przycisk
@@ -826,76 +909,81 @@ class SettingsPage(ctk.CTkFrame):
         frame.grid(row=0, column=0, padx=20, pady=20, sticky="nsew")
         frame.grid_columnconfigure(1, weight=1)
 
-        # ---------------- WEJŚCIA / WYJŚCIA ----------------
-        # Dwa osobne inputy: Left / Right
-        ctk.CTkLabel(frame, text="Input (Left):").grid(row=0, column=0, padx=10, pady=10, sticky="w")
-        self.input_L_combo = ctk.CTkComboBox(frame, values=[])
-        self.input_L_combo.grid(row=0, column=1, padx=10, pady=10, sticky="ew")
+        # ==========================
+        #   UKŁAD USTAWIEŃ POMIARU
+        # ==========================
 
-        ctk.CTkLabel(frame, text="Input (Right):").grid(row=1, column=0, padx=10, pady=10, sticky="w")
-        self.input_R_combo = ctk.CTkComboBox(frame, values=[])
-        self.input_R_combo.grid(row=1, column=1, padx=10, pady=10, sticky="ew")
+        row_i = 0
 
-        ctk.CTkLabel(frame, text="Output channel:").grid(row=2, column=0, padx=10, pady=10, sticky="w")
+        # Input device
+        ctk.CTkLabel(frame, text="Input device:").grid(row=row_i, column=0, padx=10, pady=5, sticky="w")
+        self.input_device_combo = ctk.CTkComboBox(frame, values=[])
+        self.input_device_combo.grid(row=row_i, column=1, padx=10, pady=5, sticky="ew")
+        row_i += 1
+
+        # Output device
+        ctk.CTkLabel(frame, text="Output device:").grid(row=row_i, column=0, padx=10, pady=5, sticky="w")
         self.output_combo = ctk.CTkComboBox(frame, values=[])
-        self.output_combo.grid(row=2, column=1, padx=10, pady=10, sticky="ew")
+        self.output_combo.grid(row=row_i, column=1, padx=10, pady=5, sticky="ew")
+        row_i += 1
 
         # Sample rate
-        ctk.CTkLabel(frame, text="Sample rate:").grid(row=3, column=0, padx=10, pady=10, sticky="w")
-        self.sample_rate_combo = ctk.CTkComboBox(frame, values=["44100", "48000", "88200", "96000", "192000"])
+        ctk.CTkLabel(frame, text="Sample rate [Hz]:").grid(row=row_i, column=0, padx=10, pady=5, sticky="w")
+        self.sample_rate_combo = ctk.CTkComboBox(frame, values=["44100", "48000", "88200", "96000"])
         self.sample_rate_combo.set("48000")
-        self.sample_rate_combo.grid(row=3, column=1, padx=10, pady=10, sticky="ew")
+        self.sample_rate_combo.grid(row=row_i, column=1, padx=10, pady=5, sticky="ew")
+        row_i += 1
 
         # Buffer size
-        ctk.CTkLabel(frame, text="Buffer size (frames):").grid(row=4, column=0, padx=10, pady=10, sticky="w")
+        ctk.CTkLabel(frame, text="Buffer size [frames]:").grid(row=row_i, column=0, padx=10, pady=5, sticky="w")
         self.buffer_size_combo = ctk.CTkComboBox(frame, values=["64", "128", "256", "512", "1024"])
         self.buffer_size_combo.set("256")
-        self.buffer_size_combo.grid(row=4, column=1, padx=10, pady=10, sticky="ew")
+        self.buffer_size_combo.grid(row=row_i, column=1, padx=10, pady=5, sticky="ew")
+        row_i += 1
 
         # Smoothing
-        ctk.CTkLabel(frame, text="Smoothing (Magnitude):").grid(
-            row=5, column=0, padx=10, pady=10, sticky="w"
-        )
-        self.smoothing_combo = ctk.CTkComboBox(
-            frame,
-            values=["Raw", "1/24 octave", "1/12 octave", "1/6 octave", "1/3 octave"],
-            command=self._on_smoothing_change
-        )
-        self.smoothing_combo.set("1/6 octave")
-        self.smoothing_combo.grid(row=5, column=1, padx=10, pady=10, sticky="ew")
+        ctk.CTkLabel(frame, text="Smoothing:").grid(row=row_i, column=0, padx=10, pady=5, sticky="w")
+        self.smoothing_combo = ctk.CTkComboBox(frame, values=["Raw", "1/24", "1/12", "1/6", "1/3"])
+        self.smoothing_combo.set("Raw")
+        self.smoothing_combo.grid(row=row_i, column=1, padx=10, pady=5, sticky="ew")
+        row_i += 1
+
+        # Add stretch to column 1
+        frame.grid_columnconfigure(1, weight=1)
 
         # IR window after peak (ms)
         ctk.CTkLabel(frame, text="IR window after peak [ms]:").grid(
-            row=6, column=0, padx=10, pady=10, sticky="w"
+            row=5, column=0, padx=10, pady=10, sticky="w"
         )
         self.ir_window_entry = ctk.CTkEntry(frame, width=120)
-        self.ir_window_entry.grid(row=6, column=1, padx=10, pady=10, sticky="ew")
+        self.ir_window_entry.grid(row=5, column=1, padx=10, pady=10, sticky="ew")
         self.ir_window_entry.insert(0, "500")
         self.ir_window_entry.bind("<KeyRelease>", self._on_ir_window_change)
 
         # Measurement mode (mono / stereo)
         ctk.CTkLabel(frame, text="Measurement mode:").grid(
-            row=7, column=0, padx=10, pady=10, sticky="w"
+            row=6, column=0, padx=10, pady=10, sticky="w"
         )
         self.measure_mode_combo = ctk.CTkComboBox(
             frame,
             values=["Mono", "Stereo"]
         )
         self.measure_mode_combo.set("Mono")
-        self.measure_mode_combo.grid(row=7, column=1, padx=10, pady=10, sticky="ew")
+        self.measure_mode_combo.grid(row=6, column=1, padx=10, pady=10, sticky="ew")
 
         # Input meter
-        ctk.CTkLabel(frame, text="Input level:").grid(row=8, column=0, padx=10, pady=10, sticky="w")
+        ctk.CTkLabel(frame, text="Test input:").grid(row=7, column=0, padx=10, pady=10, sticky="w")
         self.meter_bar = ctk.CTkProgressBar(frame, width=220)
-        self.meter_bar.grid(row=8, column=1, padx=10, pady=10, sticky="w")
+        self.meter_bar.grid(row=7, column=1, padx=10, pady=10, sticky="e")
         self.meter_bar.set(0)
 
         self.meter_btn = ctk.CTkButton(frame, text="Start input meter", command=self._toggle_meter)
-        self.meter_btn.grid(row=9, column=1, padx=10, pady=10, sticky="w")
+        self.meter_btn.grid(row=7, column=1, padx=10, pady=10, sticky="w")
 
         # Test tone
+        ctk.CTkLabel(frame, text="Test output:").grid(row=9, column=0, padx=10, pady=10, sticky="w")
         self.test_btn = ctk.CTkButton(frame, text="Test tone (1 kHz)", command=self._play_test)
-        self.test_btn.grid(row=10, column=1, padx=10, pady=15, sticky="w")
+        self.test_btn.grid(row=9, column=1, padx=10, pady=15, sticky="w")
 
         # Załaduj listę wejść/wyjść
         self._load_devices()
@@ -969,20 +1057,20 @@ class SettingsPage(ctk.CTkFrame):
         input_values = [e["label"] for e in self.input_entries] or ["Brak wejścia"]
         output_values = [e["label"] for e in self.output_entries] or ["Brak wyjścia"]
 
-        # Ustawiamy wartości w comboboxach
-        input_values = [e["label"] for e in self.input_entries] or ["Brak wejścia"]
-        output_values = [e["label"] for e in self.output_entries] or ["Brak wyjścia"]
-
         # Oba inputy (L/R) korzystają z tej samej listy
-        self.input_L_combo.configure(values=input_values)
-        self.input_R_combo.configure(values=input_values)
+        self.input_device_combo.configure(values=input_values)
         self.output_combo.configure(values=output_values)
 
         # Domyślny wybór
-        self.input_L_combo.set(input_values[0])
-        self.input_R_combo.set(input_values[0])
+        self.input_device_combo.set(input_values[0])
         self.output_combo.set(output_values[0])
 
+    def get_selected_input_device_index(self):
+        selected = self.input_device_combo.get()
+        for entry in self.input_entries:
+            if entry["label"] == selected:
+                return entry["index"]
+        return None
 
     # =====================================================================
     # --- TEST TONE + INPUT METER ---
@@ -1000,7 +1088,8 @@ class SettingsPage(ctk.CTkFrame):
             show_error(f"Nie udało się odtworzyć sygnału testowego.\n\nSzczegóły:\n{e}")
 
     def _toggle_meter(self):
-        in_idx = self.get_selected_input_index()
+        in_idx = self.get_selected_input_device_index()
+
         if in_idx is None:
             show_error("Nie wybrano wejścia audio.")
             return
@@ -1021,31 +1110,12 @@ class SettingsPage(ctk.CTkFrame):
     # --- HELPERS ---
     # =====================================================================
 
-    def _get_input_index_from_label(self, label: str):
-        """Pomocniczo: zamiana etykiety z comboboxa na index urządzenia."""
-        if not hasattr(self, "input_entries"):
-            return None
-        for entry in self.input_entries:
-            if entry["label"] == label:
-                return entry["index"]
-        return None
-
-    def get_selected_input_L_index(self):
-        """Index urządzenia wejściowego wybranego dla kanału Left."""
-        selected = self.input_L_combo.get()
-        return self._get_input_index_from_label(selected)
-
-    def get_selected_input_R_index(self):
-        """Index urządzenia wejściowego wybranego dla kanału Right."""
-        selected = self.input_R_combo.get()
-        return self._get_input_index_from_label(selected)
-
     def get_selected_input_index(self):
         """
-        Zachowanie wsteczne – używane np. przez input meter.
-        Traktujemy Left jako "główne" wejście.
+        Zachowanie wsteczne – alias na główne wejście.
+        Teraz używamy jednego urządzenia input_device_combo.
         """
-        return self.get_selected_input_L_index()
+        return self.get_selected_input_device_index()
 
     def get_selected_output_index(self):
         """Zwraca index urządzenia wyjściowego wybranego w output_combo."""
@@ -1178,40 +1248,52 @@ class AboutPage(ctk.CTkFrame):
         tabs.add("O autorze")
         tabs.add("Informacje techniczne")
 
-        # ------------------ Helper do sekcji ------------------
-        def add_section(tab, title_text, body_text):
-            frame = ctk.CTkFrame(tab, fg_color="transparent")
-            frame.pack(fill="both", expand=True, padx=20, pady=15)
-
-            # Nagłówek sekcji
-            ctk.CTkLabel(
+        def add_section(frame, title, text):
+            # Tytuł sekcji
+            title_label = ctk.CTkLabel(
                 frame,
-                text=title_text,
-                font=("Roboto", 20, "bold")
-            ).pack(anchor="w", pady=(0, 10))
+                text=title,
+                font=("Arial", 20, "bold"),
+                anchor="w"
+            )
+            title_label.pack(anchor="w", pady=(10, 5))
 
-            # Tekst sekcji
-            ctk.CTkLabel(
+            # Scrollowalny tekst sekcji
+            textbox = ctk.CTkTextbox(
                 frame,
-                text=body_text,
-                font=("Roboto", 16),
-                justify="left",
-                wraplength=850
-            ).pack(anchor="w", pady=5)
+                wrap="word",
+                font=("Arial", 15),
+                height=350  # możesz dostosować wysokość
+            )
+            textbox.pack(fill="both", expand=True, padx=10, pady=5)
+
+            # Wstaw tekst i zablokuj edytowanie
+            textbox.insert("0.0", text)
+            textbox.configure(state="disabled")
+
+            return textbox
 
         # ======================================================
         # 1. OPIS PROGRAMU
         # ======================================================
 
         opis = (
-            "Easy IResponse to zaawansowana aplikacja służąca do pomiaru oraz syntezy akustycznej "
-            "odpowiedzi impulsowej pomieszczeń z zastosowaniem metody Exponential Sine Sweep (ESS). "
-            "Program integruje generację sygnału testowego, jego odtworzenie, rejestrację odpowiedzi "
-            "toru elektroakustycznego oraz dekonwolucję widmową w celu uzyskania czystej odpowiedzi "
-            "liniowej. Aplikacja służy również do analizy IR, generowania syntetycznych IR, "
-            "a także — w rozszerzeniach — do wykonywania splotu IR z sygnałem audio w procesach "
-            "auralizacji wnętrz."
+            "Easy IResponse to aplikacja do precyzyjnego pomiaru odpowiedzi impulsowej (IR) "
+            "z użyciem metody Exponential Sine Sweep (ESS) zgodnej z techniką Fariny. "
+            "Program łączy generację sweepa, odtwarzanie, jednoczesne nagrywanie sygnału, "
+            "dekonwolucję oraz analizę częstotliwościową.\n\n"
+            "Aplikacja obsługuje pomiary MONO oraz STEREO, w tym dwa niezależne wejścia "
+            "wejściowe (Input L oraz Input R), co umożliwia pomiary dwukanałowe, pomiary HRTF "
+            "oraz rejestrację odpowiedzi dwóch mikrofonów jednocześnie. "
+            "Kanały są normalizowane wspólnie, zapewniając zachowanie relacji poziomów.\n\n"
+            "Program obsługuje uśrednianie wielu sweepów (concatenated sweep averaging), "
+            "które znacząco poprawia stosunek sygnał/szum (SNR). Zaimplementowano pełny model "
+            "uśredniania synchronicznego: sklejanie sweepów w jednym buforze, dzielenie nagrania "
+            "na okna oraz dekonwolucję okna uśrednionego.\n\n"
+            "Interfejs aplikacji pozwala konfigurować wszystkie parametry pomiarowe, przeglądać IR, "
+            "charakterystyki amplitudowe oraz eksportować wyniki do plików WAV."
         )
+
         add_section(tabs.tab("Opis programu"), "Opis programu", opis)
 
         # ======================================================
@@ -1220,20 +1302,23 @@ class AboutPage(ctk.CTkFrame):
 
         funkcje = (
             "• Pomiar odpowiedzi impulsowej metodą ESS (Exponential Sine Sweep)\n"
-            "• Obsługa pomiaru MONO oraz STEREO\n"
-            "• Stereo z dwoma niezależnymi wejściami (Input L / Input R)\n"
-            "• Możliwość pracy z dwoma różnymi urządzeniami wejściowymi jednocześnie\n"
-            "• Wspólna normalizacja IR dla kanałów L i R – niezbędna przy pomiarach HRTF\n"
-            "• Automatyczna dekonwolucja i rekonstrukcja IR\n"
+            "• Tryby pomiarowe: MONO oraz STEREO\n"
+            "• Obsługa dwóch niezależnych wejść audio (Input L / Input R)\n"
+            "• Możliwość użycia jednego urządzenia 2-kanałowego lub dwóch osobnych urządzeń\n"
+            "• Jednoczesne nagrywanie dwóch kanałów w trybie stereo\n"
+            "• Wspólna normalizacja IR kanałów L i R — wymagana przy pomiarach HRTF\n"
+            "• Uśrednianie wielu sweepów (concatenated sweep averaging) poprawiające SNR\n"
+            "• Automatyczne sprawdzanie zgodności długości IR z długością sweepa\n"
+            "• Pełna dekonwolucja widmowa (FFT · inverse-sweep)\n"
+            "• Generacja sweepa z fade-out, aby uniknąć klików na łączeniach\n"
             "• Analiza IR w dziedzinie czasu i częstotliwości\n"
-            "• Wykresy z wyborem kanału (L / R) i dynamicznym oknem IR\n"
-            "• Zapis surowego nagrania oraz IR osobno dla kanałów L i R\n"
-            "• Kalibracja SPL z użyciem różowego szumu\n"
-            "• Konfigurowalny smoothing (Raw, 1/24, 1/12, 1/6, 1/3 okt.)\n"
-            "• Integracja z urządzeniami audio w czasie rzeczywistym\n"
-            "• Moduły rozszerzeń: generowanie IR, splot IR z audio"
+            "• Dynamiczny wybór kanału do wyświetlania (L / R)\n"
+            "• Surowe nagrania + IR zapisywane osobno dla obu kanałów\n"
+            "• Kalibracja SPL z monitoringiem poziomu wejściowego w czasie rzeczywistym\n"
+            "• Smoothing charakterystyki: Raw, 1/24, 1/12, 1/6, 1/3 okt.\n"
+            "• Zmienne okno wizualizacji IR za pikiem (ms)\n"
+            "• Integracja z real-time audio (sounddevice)\n"
         )
-
         add_section(tabs.tab("Funkcjonalności"), "Funkcjonalności", funkcje)
 
         # ======================================================
@@ -1241,31 +1326,47 @@ class AboutPage(ctk.CTkFrame):
         # ======================================================
 
         instrukcja = (
-            "1. Wejdź w zakładkę „Ustawienia” i wybierz urządzenia audio.\n"
-            "   • Input (Left) – lewy kanał pomiarowy\n"
-            "   • Input (Right) – prawy kanał pomiarowy\n"
-            "   • Możesz wybrać jedno urządzenie 2-kanałowe lub dwa różne urządzenia wejściowe\n\n"
-            "2. Wybierz tryb pomiaru:\n"
-            "   • MONO – używany jest tylko kanał Left\n"
-            "   • STEREO – program jednocześnie nagrywa Input L i Input R\n"
-            "     (idealne do pomiarów HRTF lub pomiarów dwukanałowych)\n\n"
-            "3. Ustaw parametry sweepa, sample rate i buffer size.\n"
-            "4. Wykonaj opcjonalną kalibrację SPL.\n"
-            "5. Naciśnij „Start measurement”.\n\n"
-            "Podczas pomiaru:\n"
-            "• Program generuje sweep\n"
-            "• Odtwarza sygnał na wyjściu\n"
-            "• Nagrywa kanał L i R równolegle\n"
-            "• Wykonuje dekonwolucję\n"
-            "• Normalizuje oba kanały tym samym współczynnikiem\n\n"
-            "Zapisane pliki:\n"
-            "• RECORDED_L_*.wav – nagranie surowe (lewy kanał)\n"
-            "• RECORDED_R_*.wav – nagranie surowe (prawy kanał)\n"
-            "• IR_L_*.wav – odpowiedź impulsowa lewego kanału\n"
-            "• IR_R_*.wav – odpowiedź impulsowa prawego kanału\n\n"
-            "Na wykresach możesz przełączać kanał (L / R) do podglądu IR i charakterystyki."
-        )
+            "1. W zakładce „Ustawienia pomiaru” wybierz urządzenia audio:\n"
+            "   • Input (Left) — lewy kanał pomiarowy\n"
+            "   • Input (Right) — prawy kanał pomiarowy\n"
+            "   • Output — urządzenie odtwarzające sweep\n"
+            "   Możesz użyć dwóch osobnych urządzeń wejściowych.\n\n"
 
+            "2. Wybierz tryb pracy:\n"
+            "   • MONO — nagrywany jest tylko kanał Left\n"
+            "   • STEREO — nagrywane są oba kanały równolegle\n\n"
+
+            "3. Skonfiguruj parametry:\n"
+            "   • Długość sweepa\n"
+            "   • Zakres częstotliwości start/end\n"
+            "   • Fade (domyślnie 0.05 s — usuwa klik przy końcu sweepa)\n"
+            "   • Długość IR\n"
+            "   • Liczbę uśrednień (averages)\n\n"
+
+            "4. Ważne zasady dotyczące uśredniania:\n"
+            "   • Aplikacja generuje (averages + 1) sklejonych sweepów.\n"
+            "   • Pierwsze okno nagrania jest odrzucane.\n"
+            "   • Kolejne okna są uśredniane synchronicznie.\n"
+            "   • Aby uniknąć aliasingu czasowego, długość IR musi być "
+            "≤ długości sweepa, gdy averages > 1. Program automatycznie to wymusza.\n\n"
+
+            "5. Wykonaj kalibrację SPL (opcjonalnie), aby ustawić poprawny poziom nagrania.\n\n"
+
+            "6. Naciśnij „Start measurement”:\n"
+            "   • Program odtworzy sklejone sweepy\n"
+            "   • Nagranie będzie równoległe (L / R)\n"
+            "   • IR zostaną zdekoniugowane i normalizowane jednym wspólnym współczynnikiem\n\n"
+
+            "7. Zapisane pliki:\n"
+            "   • RECORDED_L_*.wav — surowe nagranie lewego kanału\n"
+            "   • RECORDED_R_*.wav — surowe nagranie prawego kanału\n"
+            "   • IR_L_*.wav — odpowiedź impulsowa kanału L\n"
+            "   • IR_R_*.wav — odpowiedź impulsowa kanału R\n\n"
+
+            "8. Wykresy:\n"
+            "   • IR jest przycinana wizualnie do okna za głównym pikiem\n"
+            "   • Charakterystyka amplitudowa może być wygładzona"
+        )
         add_section(tabs.tab("Instrukcja pomiaru"), "Instrukcja pomiaru IR", instrukcja)
 
         # ======================================================
@@ -1307,24 +1408,20 @@ class AboutPage(ctk.CTkFrame):
         # ======================================================
 
         techniczne = (
-            "• Algorytm pomiarowy: Exponential Sine Sweep (ESS)\n"
-            "• Tryby pracy: MONO oraz STEREO\n"
-            "• Stereo:\n"
-            "   – obsługa dwóch wejść: Input L / Input R\n"
-            "   – możliwość korzystania z dwóch różnych urządzeń wejściowych\n"
-            "   – automatyczne wyrównanie długości nagrania\n"
-            "   – wspólna normalizacja IR dla kanałów L i R (wymagane przy HRTF)\n"
-            "• Dekonwolucja: widmowe odwracanie sweepa, FFT(recorded) × FFT(inverse)\n"
-            "• Windowing: fade-out oraz wyrównanie piku do t=0\n"
-            "• Format audio: WAV 32-bit float\n"
-            "• Wykresy: IR + Magnitude Response, smoothing do 1/24 okt.\n"
-            "• Wymagania systemowe: Windows 10/11, Python 3.10+\n"
-            "• Biblioteki: numpy, sounddevice, soundfile, customtkinter, matplotlib"
+            "• Algorytm pomiarowy: Exponential Sine Sweep (ESS) wg Fariny\n"
+            "• Generacja sweepa z fade-out, aby pierwszy i ostatni punkt były równe zero\n"
+            "• Uśrednianie concat sweepów: sklejanie bez przerwy próbki do próbki\n"
+            "• Dzielenie nagrania na okna długości jednego sweepa (pierwsze pomijane)\n"
+            "• Uśrednianie synchroniczne poprawiające SNR\n"
+            "• Wymuszenie IR_length ≤ sweep_length, gdy averages > 1 (ochrona przed aliasingiem)\n"
+            "• Dekonwolucja: FFT(recorded) × conj(FFT(inverse_sweep))\n"
+            "• Wspólna normalizacja IR kanałów L i R — identyczny współczynnik\n"
+            "• Format nagrań i IR: WAV 32-bit float\n"
+            "• Zachowano zgodność długości kanałów stereo oraz pre-align piku IR\n"
+            "• Wykresy: czasowe + częstotliwościowe z smoothingiem\n"
+            "• Biblioteki: numpy, soundfile, sounddevice, matplotlib, customtkinter\n"
         )
-
         add_section(tabs.tab("Informacje techniczne"), "Informacje techniczne", techniczne)
-
-
 
 
 # --------------------------------------------------
@@ -1343,7 +1440,7 @@ class EasyIResponseApp(ctk.CTk):
     def _safe_close(self):
         # 1. Stop input meter
         try:
-            self.pages["settings"].stop_input_meter()
+            self.pages["settings"].stop_input_monitor()
         except Exception:
             pass
 
@@ -1383,6 +1480,7 @@ class EasyIResponseApp(ctk.CTk):
         self.title("Easy IResponse")
         self.geometry("1200x800")
         self.minsize(900, 550)
+        self.resizable(False, False)
 
         # Grid główny
         self.grid_columnconfigure(0, weight=0)   # sidebar
@@ -1500,18 +1598,19 @@ class EasyIResponseApp(ctk.CTk):
         na podstawie zakładki 'Ustawienia pomiaru'.
 
         Zawiera:
-        - input_device_L / input_device_R  – indexy wejść (Left / Right)
-        - input_device                      – alias na Left (dla SPL, input meter)
-        - input_channels                    – 1 (mono) lub 2 (stereo)
-        - measurement_mode                  – 'Mono' / 'Stereo'
+          - input_device      – index wejścia (jedno urządzenie)
+          - output_device     – index wyjścia
+          - sample_rate       – fs [Hz]
+          - buffer_size       – rozmiar bufora (frames)
+          - input_channels    – 1 (Mono) lub 2 (Stereo)
+          - measurement_mode  – 'Mono' / 'Stereo'
         """
         settings_page: SettingsPage = self.pages["settings"]
 
-        in_L = settings_page.get_selected_input_L_index()
-        in_R = settings_page.get_selected_input_R_index()
+        in_dev = settings_page.get_selected_input_device_index()
         out_idx = settings_page.get_selected_output_index()
 
-        if in_L is None or out_idx is None:
+        if in_dev is None or out_idx is None:
             return None
 
         # sample rate
@@ -1531,29 +1630,25 @@ class EasyIResponseApp(ctk.CTk):
         mode_lower = str(mode).lower()
         stereo = mode_lower.startswith("stereo")
 
-        # liczba kanałów z punktu widzenia measurement_engine
+        # liczba kanałów
         input_channels = 2 if stereo else 1
 
-        # Jeśli stereo i oba inputy to ten sam device → upewnij się, że ma ≥ 2 kanały
-        if stereo and in_L == in_R:
-            try:
-                dev_info = sd.query_devices(in_L)
-                max_in = int(dev_info.get("max_input_channels", 1))
-            except Exception:
-                max_in = 1
+        # sprawdź, czy urządzenie ma wystarczającą liczbę kanałów wejściowych
+        try:
+            dev_info = sd.query_devices(in_dev)
+            max_in = int(dev_info.get("max_input_channels", 1))
+        except Exception:
+            max_in = 1
 
-            if max_in < 2:
-                show_error(
-                    f"Urządzenie wejściowe ma tylko {max_in} kanał(ów).\n"
-                    f"Nie można użyć go w trybie stereo jako źródła L/R.\n"
-                    f"Zmień urządzenie lub wybierz różne wejścia dla Left/Right."
-                )
-                return None
+        if input_channels > max_in:
+            show_error(
+                f"Urządzenie wejściowe ma tylko {max_in} kanał(ów).\n"
+                f"Nie można użyć go w trybie {'stereo' if stereo else 'mono'}."
+            )
+            return None
 
         return {
-            "input_device": in_L,  # alias na Left – dla SPL / input metera
-            "input_device_L": in_L,
-            "input_device_R": in_R,
+            "input_device": in_dev,
             "output_device": out_idx,
             "sample_rate": sr,
             "buffer_size": buf,

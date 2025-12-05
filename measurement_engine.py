@@ -6,25 +6,52 @@ import sounddevice as sd
 
 
 def generate_exponential_sweep(fs, duration, f_start, f_end):
-    """
-    Eksponencjalny sine sweep wg Fariny.
-    fs        - częstotliwość próbkowania [Hz]
-    duration  - długość sweepa [s]
-    f_start   - częstotliwość startowa [Hz]
-    f_end     - częstotliwość końcowa [Hz]
-    """
+    if f_start <= 0:
+        raise ValueError("f_start musi być > 0 Hz")
+
+    R = f_end / f_start
     n_samples = int(fs * duration)
     t = np.linspace(0, duration, n_samples, endpoint=False)
 
-    # klasyczne wzory na ESS
-    K = duration * 2.0 * np.pi * f_start / np.log(f_end / f_start)
-    L = np.log(f_end / f_start) / duration
+    K = duration * 2 * np.pi * f_start / np.log(R)
+    L = np.log(R) / duration
 
     sweep = np.sin(K * (np.exp(L * t) - 1.0))
 
-    # normalizacja, żeby nie przesterować wyjścia
-    sweep /= np.max(np.abs(sweep) + 1e-12)
+    # --- Normalizacja (0 dBFS) ---
+    sweep /= (np.max(np.abs(sweep)) + 1e-12)
+
+    # --- Obniżenie poziomu do -3 dbfs ---
+    sweep *= 10 ** (-3 / 20)   # ≈ 0.70794578
+
+    # --- Szukanie ostatniego przejścia przez zero ---
+    # patrzymy na znak kolejnych próbek
+    signs = np.sign(sweep)
+    zero_cross = None
+
+    for i in range(len(signs) - 2, 0, -1):
+        if signs[i] == 0:
+            zero_cross = i
+            break
+        if signs[i] != signs[i+1]:
+            zero_cross = i+1
+            break
+
+    if zero_cross is None:
+        zero_cross = len(sweep) - 1
+
+    # --- Ucięcie sweepa w miejscu zero-cross ---
+    sweep = sweep[:zero_cross]
+    # Dodanie próbki 0, aby zakończyć sygnał perfekcyjnie
+    sweep = np.concatenate([sweep, np.zeros(1, dtype=np.float32)])
+
+    # --- Wymuszenie pierwszej próbki 0 — zgodnie z wymaganiami metody Fariny ---
+    sweep[0] = 0.0
+
     return sweep.astype(np.float32)
+
+
+
 
 
 def generate_inverse_filter(sweep, fs, f_start, f_end):
@@ -49,165 +76,19 @@ def generate_inverse_filter(sweep, fs, f_start, f_end):
     return inv.astype(np.float32)
 
 
-def playrec_sweep(sweep, fs, audio_cfg, extra_silence=1.0):
-    """
-    Odtwarza sweep na wyjściu i jednocześnie nagrywa wejście.
-
-    Obsługuje:
-    - MONO:  1 kanał z input_device
-    - STEREO wariant A: 2 kanały z JEDNEGO device'a (input_device_L == input_device_R)
-    - STEREO wariant B: 2 osobne device'y (input_device_L != input_device_R)
-    """
-    silence = np.zeros(int(fs * extra_silence), dtype=np.float32)
-    play_sig = np.concatenate([sweep, silence]).astype(np.float32)
-
-    channels_in = int(audio_cfg.get("input_channels", 1))
-    mode = str(audio_cfg.get("measurement_mode", "Mono")).lower()
-
-    # Aliasy / domyślne wartości
-    in_L = audio_cfg.get("input_device_L", audio_cfg.get("input_device"))
-    in_R = audio_cfg.get("input_device_R", in_L)
+def _play_record(play_sig, fs, audio_cfg):
+    play_sig = np.asarray(play_sig, dtype=np.float32)
+    channels_in = int(audio_cfg["input_channels"])
+    in_dev = audio_cfg["input_device"]
     out_dev = audio_cfg["output_device"]
     blocksize = audio_cfg["buffer_size"]
 
-    # ------------------------------------------------------
-    # 1) MONO: klasyczny przypadek – 1 input stream, 1 kanał
-    # ------------------------------------------------------
-    if channels_in == 1 or mode.startswith("mono"):
-        q = queue.Queue()
+    q = queue.Queue()
 
-        def input_callback(indata, frames, time, status):
-            if status:
-                print("Input status:", status)
-            q.put(indata.copy())
-
-        play_pos = 0
-
-        def output_callback(outdata, frames, time, status):
-            nonlocal play_pos
-            if status:
-                print("Output status:", status)
-
-            end = min(play_pos + frames, len(play_sig))
-            chunk = play_sig[play_pos:end]
-
-            outdata[:, 0] = 0.0
-            outdata[:len(chunk), 0] = chunk
-            play_pos = end
-
-        in_stream = sd.InputStream(
-            samplerate=fs,
-            channels=1,
-            device=in_L,
-            blocksize=blocksize,
-            dtype="float32",
-            callback=input_callback,
-        )
-
-        out_stream = sd.OutputStream(
-            samplerate=fs,
-            channels=1,
-            device=out_dev,
-            blocksize=blocksize,
-            dtype="float32",
-            callback=output_callback,
-        )
-
-        in_stream.start()
-        out_stream.start()
-
-        while play_pos < len(play_sig):
-            sd.sleep(10)
-
-        out_stream.stop(); out_stream.close()
-        in_stream.stop(); in_stream.close()
-
-        blocks = []
-        while not q.empty():
-            blocks.append(q.get())
-
-        if not blocks:
-            raise RuntimeError("Brak nagranego sygnału podczas pomiaru IR.")
-
-        recorded = np.concatenate(blocks, axis=0)  # (N, 1)
-        return recorded[:, 0].copy()
-
-    # ------------------------------------------------------
-    # 2) STEREO z jednego device'a (2 kanały)
-    # ------------------------------------------------------
-    if in_L == in_R:
-        q = queue.Queue()
-
-        def input_callback(indata, frames, time, status):
-            if status:
-                print("Input status (stereo 1 dev):", status)
-            q.put(indata.copy())   # (frames, 2)
-
-        play_pos = 0
-
-        def output_callback(outdata, frames, time, status):
-            nonlocal play_pos
-            if status:
-                print("Output status:", status)
-
-            end = min(play_pos + frames, len(play_sig))
-            chunk = play_sig[play_pos:end]
-
-            outdata[:, 0] = 0.0
-            outdata[:len(chunk), 0] = chunk
-            play_pos = end
-
-        in_stream = sd.InputStream(
-            samplerate=fs,
-            channels=2,
-            device=in_L,
-            blocksize=blocksize,
-            dtype="float32",
-            callback=input_callback,
-        )
-
-        out_stream = sd.OutputStream(
-            samplerate=fs,
-            channels=1,
-            device=out_dev,
-            blocksize=blocksize,
-            dtype="float32",
-            callback=output_callback,
-        )
-
-        in_stream.start()
-        out_stream.start()
-
-        while play_pos < len(play_sig):
-            sd.sleep(10)
-
-        out_stream.stop(); out_stream.close()
-        in_stream.stop(); in_stream.close()
-
-        blocks = []
-        while not q.empty():
-            blocks.append(q.get())
-        if not blocks:
-            raise RuntimeError("Brak nagranego sygnału podczas pomiaru IR (stereo 1 dev).")
-
-        recorded = np.concatenate(blocks, axis=0)  # (N, 2)
-        return recorded.copy()
-
-    # ------------------------------------------------------
-    # 3) STEREO z dwóch device'ów (L i R osobno)
-    # ------------------------------------------------------
-    qL = queue.Queue()
-    qR = queue.Queue()
-
-    def input_callback_L(indata, frames, time, status):
+    def input_callback(indata, frames, time, status):
         if status:
-            print("Input L status:", status)
-        qL.put(indata.copy())   # (frames,1)
-
-    def input_callback_R(indata, frames, time, status):
-        if status:
-            print("Input R status:", status)
-        qR.put(indata.copy())   # (frames,1)
+            print("Input status:", status)
+        q.put(indata.copy())
 
     play_pos = 0
 
@@ -223,22 +104,13 @@ def playrec_sweep(sweep, fs, audio_cfg, extra_silence=1.0):
         outdata[:len(chunk), 0] = chunk
         play_pos = end
 
-    in_stream_L = sd.InputStream(
+    in_stream = sd.InputStream(
         samplerate=fs,
-        channels=1,
-        device=in_L,
+        channels=channels_in,
+        device=in_dev,
         blocksize=blocksize,
         dtype="float32",
-        callback=input_callback_L,
-    )
-
-    in_stream_R = sd.InputStream(
-        samplerate=fs,
-        channels=1,
-        device=in_R,
-        blocksize=blocksize,
-        dtype="float32",
-        callback=input_callback_R,
+        callback=input_callback
     )
 
     out_stream = sd.OutputStream(
@@ -247,40 +119,55 @@ def playrec_sweep(sweep, fs, audio_cfg, extra_silence=1.0):
         device=out_dev,
         blocksize=blocksize,
         dtype="float32",
-        callback=output_callback,
+        callback=output_callback
     )
 
-    in_stream_L.start()
-    in_stream_R.start()
+    in_stream.start()
     out_stream.start()
 
     while play_pos < len(play_sig):
         sd.sleep(10)
 
     out_stream.stop(); out_stream.close()
-    in_stream_L.stop(); in_stream_L.close()
-    in_stream_R.stop(); in_stream_R.close()
+    in_stream.stop(); in_stream.close()
 
-    # Zbierz bloki
-    blocks_L, blocks_R = [], []
-    while not qL.empty():
-        blocks_L.append(qL.get())
-    while not qR.empty():
-        blocks_R.append(qR.get())
+    # Zebranie nagrania
+    blocks = []
+    while not q.empty():
+        blocks.append(q.get())
 
-    if not blocks_L or not blocks_R:
-        raise RuntimeError("Brak nagranego sygnału na jednym z kanałów L/R.")
+    recorded = np.concatenate(blocks, axis=0)   # mono: (N,1) stereo:(N,2)
+    if channels_in == 1:
+        return recorded[:,0]
+    return recorded
 
-    recL = np.concatenate(blocks_L, axis=0)  # (N_L,1)
-    recR = np.concatenate(blocks_R, axis=0)  # (N_R,1)
 
-    # przytnij do wspólnej długości
-    min_len = min(len(recL), len(recR))
-    recL = recL[:min_len, 0]
-    recR = recR[:min_len, 0]
 
-    recorded = np.column_stack([recL, recR])  # (N, 2)
-    return recorded.copy()
+def playrec_sweep(sweep, fs, audio_cfg, extra_silence=1.0):
+    """
+    Klasyczny pomiar – pojedynczy sweep + cisza na ogon IR.
+    Zachowanie jak dotychczas.
+    """
+    silence = np.zeros(int(fs * extra_silence), dtype=np.float32)
+    play_sig = np.concatenate([sweep, silence]).astype(np.float32)
+    return _play_record(play_sig, fs, audio_cfg)
+
+
+def playrec_sweeps_concat(sweep, fs, audio_cfg, repeats, extra_silence=1.0):
+    """
+    Odtwarza kilka sweepów sklejonych PRÓBKA DO PRÓBKI oraz końcową ciszę.
+
+    repeats – liczba sweepów w szeregu (np. averages + 1)
+    extra_silence – cisza po OSTATNIM sweepie (żeby złapać ogon IR ostatniego).
+    """
+    sweep = np.asarray(sweep, dtype=np.float32)
+    concat = np.tile(sweep, repeats).astype(np.float32)
+
+    silence = np.zeros(int(fs * extra_silence), dtype=np.float32)
+    play_sig = np.concatenate([concat, silence]).astype(np.float32)
+
+    return _play_record(play_sig, fs, audio_cfg)
+
 
 
 
@@ -315,15 +202,6 @@ def deconvolve_ir(recorded, inverse_filter, fs, ir_length_s, fade_time_s):
     # 1. Przesunięcie impulsu do t=0 (direct sound)
     peak = np.argmax(np.abs(ir))
     ir = np.roll(ir, -peak)
-
-    # 2. Fade na końcu IR
-    ir_samples = len(ir)
-    fade_samples = int(fade_time_s * fs)
-    if 0 < fade_samples < ir_samples:
-        window = np.ones(ir_samples, dtype=np.float32)
-        tail = np.linspace(1.0, 0.0, fade_samples, endpoint=True)
-        window[-fade_samples:] = tail
-        ir *= window
 
     return ir.astype(np.float32)
 
@@ -442,6 +320,7 @@ def measure_ir(params, audio_cfg):
     fs = int(audio_cfg["sample_rate"])
     channels_in = int(audio_cfg.get("input_channels", 1))
 
+    # 1) Sweep concat-safe wg Fariny (0 na początku i końcu)
     sweep = generate_exponential_sweep(
         fs,
         params["sweep_length"],
@@ -455,12 +334,54 @@ def measure_ir(params, audio_cfg):
         params["end_freq"],
     )
 
-    recorded = playrec_sweep(
-        sweep,
-        fs,
-        audio_cfg,
-        extra_silence=params["ir_length"]
-    )
+    # 2) Liczba uśrednień (synchroniczne uśrednianie z okien)
+    avg_count = int(params.get("averages", 1) or 1)
+    if avg_count < 1:
+        avg_count = 1
+
+    if avg_count == 1:
+        # Klasyczny pomiar – pojedynczy sweep + cisza
+        recorded = playrec_sweep(
+            sweep,
+            fs,
+            audio_cfg,
+            extra_silence=params["ir_length"]
+        )
+    else:
+        # Concatenated sweeps: repeats = avg_count + 1 (pierwsze okno wyrzucamy)
+        repeats = avg_count + 1
+
+        recorded_full = playrec_sweeps_concat(
+            sweep,
+            fs,
+            audio_cfg,
+            repeats=repeats,
+            extra_silence=params["ir_length"]
+        )
+        recorded_full = np.asarray(recorded_full, dtype=np.float32)
+
+        n_sweep = len(sweep)
+        total_needed = repeats * n_sweep
+
+        if recorded_full.ndim == 1:
+            # MONO
+            if len(recorded_full) < total_needed:
+                raise RuntimeError("Nagranie jest krótsze niż oczekiwana liczba sweepów (mono).")
+
+            rec_trim = recorded_full[:total_needed]
+            windows = rec_trim.reshape(repeats, n_sweep)  # (repeats, N)
+            useful = windows[1:, :]  # wyrzucamy pierwsze okno
+            recorded = useful.mean(axis=0).astype(np.float32)  # (N,)
+        else:
+            # STEREO / wielokanałowe
+            if recorded_full.shape[0] < total_needed:
+                raise RuntimeError("Nagranie jest krótsze niż oczekiwana liczba sweepów (stereo).")
+
+            n_ch = recorded_full.shape[1]
+            rec_trim = recorded_full[:total_needed, :]  # (repeats*N, n_ch)
+            windows = rec_trim.reshape(repeats, n_sweep, n_ch)  # (repeats, N, n_ch)
+            useful = windows[1:, :, :]  # wyrzucamy pierwsze okno
+            recorded = useful.mean(axis=0).astype(np.float32)  # (N, n_ch)
 
     # --- MONO ---
     if recorded.ndim == 1 or channels_in == 1:
