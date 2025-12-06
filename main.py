@@ -116,6 +116,197 @@ class ToolTip:
             self.tip_window.destroy()
             self.tip_window = None
 
+class ConvolutionPage(ctk.CTkFrame):
+    """
+    GUI do splotu audio:
+    - Mono / Stereo (dynamicznie zmienia ilość pól IR)
+    - HRTF on/off
+    - Wet/Dry
+    - Plik audio
+    - Plik wynikowy przyklejony na dole
+    """
+
+    def __init__(self, parent, controller):
+        super().__init__(parent)
+        self.controller = controller
+
+        # ------- Zmienne -------
+        self.mode_var = ctk.StringVar(value="Mono")
+        self.hrtf_var = ctk.BooleanVar(value=False)
+
+        self.ir1_var = ctk.StringVar()
+        self.ir2_var = ctk.StringVar()
+        self.audio_var = ctk.StringVar()
+        self.output_var = ctk.StringVar()
+        self.wetdry_var = ctk.DoubleVar(value=100.0)
+
+        # ------- Layout główny -------
+        self.columnconfigure(0, weight=0)
+        self.columnconfigure(1, weight=1)
+        self.grid_rowconfigure(0, weight=1)
+
+        left = ctk.CTkFrame(self, width=420)
+        left.grid(row=0, column=0, padx=(20, 10), pady=20, sticky="nsew")
+
+        # stałe wiersze + jeden rozpychacz
+        for r in range(10):
+            left.grid_rowconfigure(r, weight=0)
+        left.grid_rowconfigure(8, weight=1)   # pusty wiersz, który dopycha dół
+
+        # Prawy panel (podgląd)
+        right = ctk.CTkFrame(self)
+        right.grid(row=0, column=1, padx=(10, 20), pady=20, sticky="nsew")
+        right.grid_columnconfigure(0, weight=1)
+        right.grid_rowconfigure(0, weight=1)
+
+        # ---------------- Tytuł ----------------
+        title = ctk.CTkLabel(left, text="🎧  Splot audio", font=("Roboto", 22, "bold"))
+        title.grid(row=0, column=0, sticky="w", pady=(5, 15))
+
+        # ---------------- Tryb Mono / Stereo ----------------
+        self.mode_seg = ctk.CTkSegmentedButton(
+            left,
+            values=["Mono", "Stereo"],
+            variable=self.mode_var,
+            command=self._update_ir_fields
+        )
+        self.mode_seg.grid(row=1, column=0, sticky="ew", pady=(5, 15))
+
+        # ---------------- HRTF ----------------
+        self.hrtf_switch = ctk.CTkSwitch(left, text="Użyj HRTF", variable=self.hrtf_var)
+        self.hrtf_switch.grid(row=2, column=0, sticky="w", pady=(0, 15))
+
+        # ---------------- IR FIELDS ----------------
+        self.ir_frame = ctk.CTkFrame(left)
+        self.ir_frame.grid(row=3, column=0, sticky="ew", pady=(0, 15))
+        self._update_ir_fields()
+
+        # ---------------- Plik audio ----------------
+        ctk.CTkLabel(left, text="Plik audio:", font=("Arial", 14, "bold")).grid(
+            row=4, column=0, sticky="w"
+        )
+
+        audio_row = ctk.CTkFrame(left)
+        audio_row.grid(row=5, column=0, sticky="ew", pady=(5, 15))
+
+        ctk.CTkEntry(audio_row, textvariable=self.audio_var).pack(
+            side="left", fill="x", expand=True, padx=(0, 5)
+        )
+        ctk.CTkButton(
+            audio_row, text="Wybierz", width=100, command=self._choose_audio
+        ).pack(side="right")
+
+        # ---------------- Wet/Dry ----------------
+        ctk.CTkLabel(left, text="Wet/Dry (%)", font=("Arial", 14, "bold")).grid(
+            row=6, column=0, sticky="w"
+        )
+
+        wd_row = ctk.CTkFrame(left)
+        wd_row.grid(row=7, column=0, sticky="ew", pady=(5, 0))
+
+        self.wetdry_slider = ctk.CTkSlider(
+            wd_row, from_=0, to=100, variable=self.wetdry_var
+        )
+        self.wetdry_slider.pack(side="left", fill="x", expand=True, padx=(0, 5))
+
+        self.wetdry_value = ctk.CTkLabel(wd_row, text="100%")
+        self.wetdry_value.pack(side="right")
+
+        self.wetdry_var.trace_add("write", self._update_wetdry_label)
+
+        # ----------- Placeholder podglądu -----------
+        ctk.CTkLabel(
+            right,
+            text="Tu będzie podgląd IR / audio / przebiegów.\nNa razie tylko GUI.",
+            font=("Arial", 18),
+        ).grid(row=0, column=0, sticky="nsew")
+
+        # ---------------- DÓŁ: Plik wynikowy + Start ----------------
+        bottom = ctk.CTkFrame(left)
+        bottom.grid(row=9, column=0, sticky="ew", pady=(10, 0))
+
+        # Plik wynikowy
+        ctk.CTkLabel(bottom, text="Plik wynikowy:", font=("Arial", 14, "bold")).pack(
+            anchor="w"
+        )
+
+        out_row = ctk.CTkFrame(bottom)
+        out_row.pack(fill="x", pady=(5, 10))
+
+        ctk.CTkEntry(out_row, textvariable=self.output_var).pack(
+            side="left", fill="x", expand=True, padx=(0, 5)
+        )
+        ctk.CTkButton(
+            out_row, text="Wybierz", width=100, command=self._choose_output
+        ).pack(side="right")
+
+        # Start button
+        ctk.CTkButton(
+            bottom,
+            text="▶ Start splotu",
+            fg_color="#d71920",
+            hover_color="#b01015",
+            command=self._start_placeholder,
+        ).pack(fill="x")
+
+    # =============================================================
+    # POLA IR – dynamicznie pokazujemy 1 lub 2 OKIENKA
+    # =============================================================
+    def _update_ir_fields(self, *_):
+        for w in self.ir_frame.winfo_children():
+            w.destroy()
+
+        mode = self.mode_var.get()
+
+        if mode == "Mono":
+            self._make_ir_row(self.ir1_var, "IR mono:")
+        else:
+            self._make_ir_row(self.ir1_var, "IR Left:")
+            self._make_ir_row(self.ir2_var, "IR Right:")
+
+    def _make_ir_row(self, var, label_text):
+        row = ctk.CTkFrame(self.ir_frame)
+        row.pack(fill="x", pady=3)
+
+        ctk.CTkLabel(row, text=label_text).pack(side="left", padx=(0, 5))
+        ctk.CTkEntry(row, textvariable=var).pack(
+            side="left", fill="x", expand=True, padx=(0, 5)
+        )
+        ctk.CTkButton(
+            row, text="Wybierz", width=90, command=lambda: self._choose_ir(var)
+        ).pack(side="right")
+
+    # =============================================================
+    # FUNKCJE PLIKÓW
+    # =============================================================
+    def _choose_ir(self, var):
+        path = fd.askopenfilename(filetypes=[("WAV", "*.wav")])
+        if path:
+            var.set(path)
+
+    def _choose_audio(self):
+        path = fd.askopenfilename(filetypes=[("WAV", "*.wav")])
+        if path:
+            self.audio_var.set(path)
+
+    def _choose_output(self):
+        path = fd.asksaveasfilename(defaultextension=".wav")
+        if path:
+            self.output_var.set(path)
+
+    # =============================================================
+    # WET/DRY label update
+    # =============================================================
+    def _update_wetdry_label(self, *_):
+        self.wetdry_value.configure(text=f"{int(self.wetdry_var.get())}%")
+
+    # Placeholder
+    def _start_placeholder(self):
+        print("Splot będzie tu zaimplementowany.")
+
+
+
+
 
 
 class MeasurementPage(ctk.CTkFrame):
@@ -1584,67 +1775,66 @@ class EasyIResponseApp(ctk.CTk):
     def _create_sidebar(self):
         self.sidebar = ctk.CTkFrame(self, width=230)
         self.sidebar.grid(row=0, column=0, sticky="nsw")
-        self.sidebar.grid_rowconfigure(0, weight=0)   # tytuł
-        self.sidebar.grid_rowconfigure(1, weight=0)   # odstęp
-        self.sidebar.grid_rowconfigure(2, weight=0)
-        self.sidebar.grid_rowconfigure(3, weight=0)
-        self.sidebar.grid_rowconfigure(4, weight=1)   # rozpycha środek
-        self.sidebar.grid_rowconfigure(5, weight=0)
-        self.sidebar.grid_rowconfigure(6, weight=0)
 
+        # Ustawienia układu
+        self.sidebar.grid_rowconfigure(0, weight=0)  # tytuł
+        self.sidebar.grid_rowconfigure(1, weight=0)  # opis
+        self.sidebar.grid_rowconfigure(2, weight=0)  # Pomiar IR
+        self.sidebar.grid_rowconfigure(3, weight=0)  # Generator IR
+        self.sidebar.grid_rowconfigure(4, weight=0)  # Splot audio
+        self.sidebar.grid_rowconfigure(5, weight=1)  # ROZPYCHA — puste miejsce
+        self.sidebar.grid_rowconfigure(6, weight=0)  # Ustawienia
+        self.sidebar.grid_rowconfigure(7, weight=0)  # O programie
+
+        # Tytuł
         title_label = ctk.CTkLabel(
-            self.sidebar,
-            text="Easy IResponse",
-            font=("Roboto", 22, "bold")
+            self.sidebar, text="Easy IResponse", font=("Roboto", 22, "bold")
         )
-        title_label.grid(row=0, column=0, padx=20, pady=(20, 10), sticky="w")
+        title_label.grid(row=0, column=0, padx=20, pady=(20, 5), sticky="w")
 
         subtitle = ctk.CTkLabel(
-            self.sidebar,
-            text="IR measurement & synthesis",
-            font=("Roboto", 11)
+            self.sidebar, text="IR measurement & synthesis", font=("Roboto", 11)
         )
         subtitle.grid(row=1, column=0, padx=20, pady=(0, 20), sticky="w")
 
     def _create_nav_buttons(self):
-        # Przyciski główne (środek)
+
         btn_measure = ctk.CTkButton(
-            self.sidebar,
-            text="🎤  Pomiar IR",
-            anchor="w",
+            self.sidebar, text="🎤  Pomiar IR", anchor="w",
             command=lambda: self.set_active_page("measurement")
         )
         btn_measure.grid(row=2, column=0, padx=15, pady=5, sticky="ew")
 
         btn_generator = ctk.CTkButton(
-            self.sidebar,
-            text="🌊  Generator IR",
-            anchor="w",
+            self.sidebar, text="🌊  Generator IR", anchor="w",
             command=lambda: self.set_active_page("generator")
         )
         btn_generator.grid(row=3, column=0, padx=15, pady=5, sticky="ew")
 
-        # Przyciski dolne
+        btn_convolution = ctk.CTkButton(
+            self.sidebar, text="🎧  Splot audio", anchor="w",
+            command=lambda: self.set_active_page("convolution")
+        )
+        btn_convolution.grid(row=4, column=0, padx=15, pady=5, sticky="ew")
+
+        # Rozpychająca przerwa — row 5
+
         btn_settings = ctk.CTkButton(
-            self.sidebar,
-            text="⚙️  Ustawienia",
-            anchor="w",
+            self.sidebar, text="⚙️  Ustawienia", anchor="w",
             command=lambda: self.set_active_page("settings")
         )
-        btn_settings.grid(row=5, column=0, padx=15, pady=(10, 5), sticky="ew")
+        btn_settings.grid(row=6, column=0, padx=15, pady=5, sticky="ew")
 
         btn_about = ctk.CTkButton(
-            self.sidebar,
-            text="ℹ️  O programie",
-            anchor="w",
+            self.sidebar, text="ℹ️  O programie", anchor="w",
             command=lambda: self.set_active_page("about")
         )
-        btn_about.grid(row=6, column=0, padx=15, pady=(0, 15), sticky="ew")
+        btn_about.grid(row=7, column=0, padx=15, pady=15, sticky="ew")
 
-        # Zapisz przyciski do późniejszego podświetlania
         self.nav_buttons = {
             "measurement": btn_measure,
             "generator": btn_generator,
+            "convolution": btn_convolution,
             "settings": btn_settings,
             "about": btn_about,
         }
@@ -1659,10 +1849,10 @@ class EasyIResponseApp(ctk.CTk):
     def _create_pages(self):
         self.pages["measurement"] = MeasurementPage(self.content_container, self)
         self.pages["generator"] = GeneratorPage(self.content_container, self)
+        self.pages["convolution"] = ConvolutionPage(self.content_container, self)  # <-- DODANE
         self.pages["settings"] = SettingsPage(self.content_container, self)
         self.pages["about"] = AboutPage(self.content_container, self)
 
-        # Ustaw wstępne pozycjonowanie (poza ekranem)
         for page in self.pages.values():
             page.place(relx=0, rely=0, relwidth=1, relheight=1)
             page.place_forget()
