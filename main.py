@@ -339,7 +339,7 @@ class MeasurementPage(ctk.CTkFrame):
         main_frame.grid(row=0, column=0, columnspan=2, sticky="nsew", padx=20, pady=20)
 
         main_frame.grid_columnconfigure(0, weight=0)
-        main_frame.grid_columnconfigure(1, weight=1)
+        main_frame.grid_columnconfigure(1, weight=2)
         main_frame.grid_rowconfigure(0, weight=1)
 
         # ==============================================================
@@ -1056,23 +1056,229 @@ class GeneratorPage(ctk.CTkFrame):
         super().__init__(parent)
         self.controller = controller
 
+        # -------------------------------------------------
+        # GŁÓWNY UKŁAD – identyczny jak w MeasurementPage
+        # -------------------------------------------------
+        self.grid_columnconfigure(0, weight=0)
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_rowconfigure(0, weight=1)
+
+        main_frame = ctk.CTkFrame(self, corner_radius=12)
+        main_frame.grid(row=0, column=0, columnspan=2,
+                        sticky="nsew", padx=20, pady=20)
+        main_frame.grid_columnconfigure(0, weight=0)  # lewy panel
+        main_frame.grid_columnconfigure(1, weight=1)  # wykresy
+        main_frame.grid_rowconfigure(0, weight=1)
+
+        # =================================================
+        # LEWA KOLUMNA — PARAMETRY GENEROWANIA IR
+        # =================================================
+        left_panel = ctk.CTkFrame(main_frame, corner_radius=12, width=300)
+        left_panel.grid_propagate(False)
+        left_panel.grid(row=0, column=0, padx=15, pady=15, sticky="ns")
+        left_panel.grid_columnconfigure(0, weight=1)
+
+        # Układ pionowy: góra (ustawienia) + rozpychacz + dół (ścieżka + przycisk)
+        left_panel.grid_rowconfigure(0, weight=0)   # top_panel
+        left_panel.grid_rowconfigure(1, weight=1)   # pusty wiersz – rozpycha
+        left_panel.grid_rowconfigure(2, weight=0)   # bottom_panel
+
+        # ------------------------- GÓRNY BLOK USTAWIEŃ -------------------------
+        top_panel = ctk.CTkFrame(left_panel, fg_color="transparent")
+        top_panel.grid(row=0, column=0, sticky="new")
+        top_panel.grid_columnconfigure(0, weight=1)
+
         title = ctk.CTkLabel(
-            self,
-            text="🌊 Generator odpowiedzi impulsowej",
-            font=("Roboto", 24, "bold")
+            top_panel,
+            text="Generator IR",
+            font=("Roboto", 22, "bold")
         )
-        title.pack(pady=(20, 10), anchor="w", padx=20)
+        title.grid(row=0, column=0, sticky="w", pady=(5, 15))
 
-        subtitle = ctk.CTkLabel(
-            self,
-            text="Tutaj będziesz generował własne odpowiedzi impulsowe\n"
-                 "(parametry filtra, czas trwania, częstotliwości itd.).",
-            justify="left"
+        # 1. Mix Early / Late
+        mix_frame = ctk.CTkFrame(top_panel)
+        mix_frame.grid(row=1, column=0, sticky="ew", pady=(5, 15))
+        mix_frame.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            mix_frame,
+            text="Charakter pogłosu (Early / Late):",
+            font=("Roboto", 14)
+        ).grid(row=0, column=0, sticky="w", pady=(5, 2))
+
+        self.mix_slider = ctk.CTkSlider(
+            mix_frame, from_=0, to=100, number_of_steps=100
         )
-        subtitle.pack(pady=(0, 20), anchor="w", padx=20)
+        self.mix_slider.set(30)
+        self.mix_slider.grid(row=1, column=0, sticky="ew", padx=5)
 
-        gen_button = ctk.CTkButton(self, text="Wygeneruj IR")
-        gen_button.pack(pady=10, padx=20, anchor="w")
+        self.mix_label = ctk.CTkLabel(
+            mix_frame,
+            text="Early: 30%   Late: 70%"
+        )
+        self.mix_label.grid(row=2, column=0, sticky="w", pady=5)
+
+        self.mix_slider.configure(command=self._update_mix_label)
+
+        # 2. Parametry techniczne (u góry, jak było)
+        params_frame = ctk.CTkFrame(top_panel)
+        params_frame.grid(row=2, column=0, sticky="ew", pady=10)
+        params_frame.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(params_frame, text="Długość IR [s]:") \
+            .grid(row=0, column=0, sticky="w", pady=5)
+        self.ir_length_entry = ctk.CTkEntry(params_frame, width=110)
+        self.ir_length_entry.insert(0, "3.0")
+        self.ir_length_entry.grid(row=0, column=1, padx=10, pady=5, sticky="w")
+
+        # ------------------------- DOLNY BLOK: ŚCIEŻKA + PRZYCISK -------------------------
+        bottom_panel = ctk.CTkFrame(left_panel, fg_color="transparent")
+        bottom_panel.grid(row=2, column=0, sticky="sew", pady=(0, 5), padx=0)
+        bottom_panel.grid_columnconfigure(0, weight=1)
+
+        # 4. Folder / plik wyjściowy IR (nad przyciskiem, ale razem na dole)
+        output_frame = ctk.CTkFrame(bottom_panel)
+        output_frame.grid(row=0, column=0, sticky="ew", pady=(5, 10))
+        output_frame.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            output_frame,
+            text="Plik wyjściowy IR:"
+        ).grid(row=0, column=0, sticky="w")
+
+        self.ir_output_var = ctk.StringVar()
+        self.output_entry = ctk.CTkEntry(
+            output_frame,
+            textvariable=self.ir_output_var
+        )
+        self.output_entry.grid(
+            row=1, column=0, sticky="ew", pady=5, padx=(0, 5)
+        )
+
+        ctk.CTkButton(
+            output_frame,
+            text="Wybierz...",
+            command=self._choose_output_path,
+            width=110
+        ).grid(row=1, column=1, padx=5, pady=5, sticky="e")
+
+        # 3. Przycisk generowania – NA SAMYM DOLE
+        self.generate_button = ctk.CTkButton(
+            bottom_panel,
+            text="▶ Generuj IR",
+            fg_color="#d71920",
+            hover_color="#b01015",
+            command=self._on_generate_ir_clicked,
+        )
+        self.generate_button.grid(
+            row=1, column=0, sticky="ew", pady=(0, 5)
+        )
+
+        # =================================================
+        # PRAWA KOLUMNA — WYKRESY (identyczne jak MeasurementPage)
+        # =================================================
+        plot_frame = ctk.CTkFrame(main_frame, corner_radius=12)
+        plot_frame.grid(row=0, column=1, padx=15, pady=15, sticky="nsew")
+        plot_frame.grid_columnconfigure(0, weight=1)
+        plot_frame.grid_rowconfigure(0, weight=0)  # (rezerwowane na nagłówek jeśli kiedyś dodasz)
+        plot_frame.grid_rowconfigure(1, weight=1)  # fig/canvas
+
+        # ---------- Figure z dwoma subplotami ----------
+        self.fig = Figure(
+            figsize=(6, 5),
+            dpi=100,
+            facecolor="#111111",
+            tight_layout=True
+        )
+
+        # Impulse Response
+        self.ax_ir = self.fig.add_subplot(2, 1, 1)
+        self.ax_ir.set_facecolor("#111111")
+        self.ax_ir.grid(True, color="#444444", alpha=0.3)
+        self.ax_ir.set_title("Impulse Response", color="white")
+        self.ax_ir.set_xlabel("Czas [s]", color="white")
+        self.ax_ir.set_ylabel("Amplituda", color="white")
+        self.ax_ir.tick_params(colors="white")
+
+        # Magnitude Response
+        self.ax_mag = self.fig.add_subplot(2, 1, 2)
+        self.ax_mag.set_facecolor("#111111")
+        self.ax_mag.grid(True, color="#444444", alpha=0.3)
+        self.ax_mag.set_title("Magnitude Response", color="white")
+        self.ax_mag.set_xlabel("Częstotliwość [Hz]", color="white")
+        self.ax_mag.set_ylabel("Poziom [dB]", color="white")
+        self.ax_mag.tick_params(colors="white")
+
+        # Canvas – tak jak w MeasurementPage
+        self.canvas = FigureCanvasTkAgg(self.fig, master=plot_frame)
+        self.canvas_widget = self.canvas.get_tk_widget()
+        self.canvas_widget.grid(
+            row=1, column=0, sticky="nsew", padx=10, pady=10
+        )
+
+        # inicjalne wyczyszczenie / ustawienie skali
+        self._clear_plots()
+
+    # =========================================================
+    # KONFIGURACJA WYKRESÓW – identyczna jak w MeasurementPage
+    # =========================================================
+    def _clear_plots(self):
+        # --- IR ---
+        self.ax_ir.cla()
+        self.ax_ir.set_facecolor("#111111")
+        self.ax_ir.grid(True, color="#444444", alpha=0.3)
+        self.ax_ir.set_title("Impulse Response", color="white")
+        self.ax_ir.set_xlabel("Czas [s]", color="white")
+        self.ax_ir.set_ylabel("Amplituda", color="white")
+        self.ax_ir.tick_params(colors="white")
+
+        # --- Magnitude ---
+        self.ax_mag.cla()
+        self.ax_mag.set_facecolor("#111111")
+        self.ax_mag.grid(True, color="#444444", alpha=0.3)
+        self.ax_mag.set_title("Magnitude Response", color="white")
+        self.ax_mag.set_xlabel("Częstotliwość [Hz]", color="white")
+        self.ax_mag.set_ylabel("Poziom [dB]", color="white")
+        self.ax_mag.tick_params(colors="white")
+
+        # skala logarytmiczna + ticki jak w MeasurementPage
+        self.ax_mag.set_xscale("log")
+        self.ax_mag.xaxis.set_major_locator(LogLocator(base=10.0))
+        self.ax_mag.xaxis.set_minor_locator(
+            LogLocator(base=10.0, subs=np.arange(2, 10))
+        )
+
+        formatter = ScalarFormatter()
+        formatter.set_scientific(False)
+        formatter.set_useOffset(False)
+        self.ax_mag.xaxis.set_major_formatter(formatter)
+
+        # domyślny zakres (tu masz 20–20000, pomiar ma 100–10000; możesz zbliżyć, jeśli chcesz 1:1)
+        self.ax_mag.set_xlim(20, 20000)
+
+        self.canvas.draw()
+
+    # =========================================================
+    # LOGIKA GUI
+    # =========================================================
+    def _update_mix_label(self, value):
+        early = int(float(value))
+        late = 100 - early
+        self.mix_label.configure(text=f"Early: {early}%   Late: {late}%")
+
+    def _on_generate_ir_clicked(self):
+        # Tu później podłączysz engine generowania IR,
+        # na razie tylko placeholder.
+        print("GENEROWANIE IR – tutaj podłączysz kod generujący IR")
+
+    def _choose_output_path(self):
+        # wybór KATALOGU – logika zapisu w engine
+        path = filedialog.askdirectory()
+        if path:
+            self.ir_output_var.set(path)
+
+
+
 
 
 class InputMonitor:
@@ -1155,11 +1361,15 @@ class SettingsPage(ctk.CTkFrame):
         subtitle.grid(row=1, column=0, padx=20, pady=(0, 20), sticky="w")
 
         # ---------------- TAB VIEW ----------------
-        self.tabs = ctk.CTkTabview(self, width=700, height=500)
+        self.tabs = ctk.CTkTabview(self, width=950, height=620)
         self.tabs.grid(row=2, column=0, padx=20, pady=20, sticky="nsew")
 
         self.tabs.add("Ustawienia pomiaru")
         self.tabs.add("Ustawienia generowania")
+
+        gen_tab = self.tabs.tab("Ustawienia generowania")
+        gen_tab.grid_rowconfigure(0, weight=1)
+        gen_tab.grid_columnconfigure(0, weight=1)
 
         # ---------------------------------------------------------
         # TAB 1 — USTAWIENIA POMIARU (WSZYSTKO CO JUŻ MAMY)
@@ -1254,23 +1464,211 @@ class SettingsPage(ctk.CTkFrame):
         # Załaduj listę wejść/wyjść
         self._load_devices()
 
-        # ---------------------------------------------------------
-        # TAB 2 — USTAWIENIA GENEROWANIA (na razie puste)
-        # ---------------------------------------------------------
-        gen_tab = self.tabs.tab("Ustawienia generowania")
+        # =========================================================
+        # SCROLLOWALNY OBSZAR DLA USTAWIEŃ GENEROWANIA
+        # =========================================================
 
-        empty_label = ctk.CTkLabel(
-            gen_tab,
-            text="Tu pojawią się ustawienia generowania IR.\nNa razie strona jest pusta.",
-            font=("Roboto", 16),
-            justify="center"
+        # Canvas + Scrollbar
+        canvas = ctk.CTkCanvas(gen_tab, bg="black", highlightthickness=0)
+        canvas.grid(row=0, column=0, sticky="nsew")
+
+        scrollbar = ctk.CTkScrollbar(gen_tab, orientation="vertical", command=canvas.yview)
+        scrollbar.grid(row=0, column=1, sticky="ns")
+
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        # Właściwy frame na treść
+        gen_frame = ctk.CTkFrame(canvas, corner_radius=12)
+        canvas_window = canvas.create_window((0, 0), window=gen_frame, anchor="nw")
+
+        gen_frame.grid_columnconfigure(0, weight=1)
+
+        # Dopasowanie szerokości frame do szerokości canvasa
+        def _resize_frame(event):
+            canvas.itemconfig(canvas_window, width=event.width)
+
+        canvas.bind("<Configure>", _resize_frame)
+
+        # Automatyczny scroll-region (gdy zawartość rośnie)
+        def _update_scrollregion(event):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        gen_frame.bind("<Configure>", _update_scrollregion)
+
+        # Rozciąganie wszystkiego na całą stronę
+        gen_tab.grid_rowconfigure(0, weight=1)
+        gen_tab.grid_columnconfigure(0, weight=1)
+
+        # =========================================================
+        # 0) PARAMETRY GENEROWANIA (Sample rate)
+        # =========================================================
+        section_gen = ctk.CTkLabel(gen_frame, text="Parametry generowania",
+                                   font=("Roboto", 20, "bold"))
+        section_gen.grid(row=0, column=0, sticky="w", pady=(10, 5), padx=10)
+
+        gen_params_frame = ctk.CTkFrame(gen_frame)
+        gen_params_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 15))
+        gen_params_frame.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(gen_params_frame, text="Sample rate [Hz]:    ").grid(
+            row=0, column=0, sticky="w", pady=5
         )
-        empty_label.pack(pady=40)
+        self.gen_sample_rate_combo = ctk.CTkComboBox(
+            gen_params_frame,
+            values=["44100", "48000", "88200", "96000"],
+            width=120
+        )
+        self.gen_sample_rate_combo.set("48000")
+        self.gen_sample_rate_combo.grid(row=0, column=1, sticky="w", padx=10, pady=5)
 
+        # =========================================================
+        # 1) GEOMETRIA POMIESZCZENIA
+        # =========================================================
+        section_geo = ctk.CTkLabel(gen_frame, text="Geometria pomieszczenia", font=("Roboto", 20, "bold"))
+        section_geo.grid(row=2, column=0, sticky="w", pady=(10, 5), padx=10)
+
+        geo_frame = ctk.CTkFrame(gen_frame)
+        geo_frame.grid(row=3, column=0, sticky="ew", padx=10, pady=(0, 15))
+        geo_frame.grid_columnconfigure((1), weight=1)
+
+        ctk.CTkLabel(geo_frame, text="Szerokość W [m]:    ").grid(row=0, column=0, sticky="w", pady=3)
+        self.room_w = ctk.CTkEntry(geo_frame, width=100)
+        self.room_w.insert(0, "5.0")
+        self.room_w.grid(row=0, column=1, sticky="ew", padx=5)
+
+        ctk.CTkLabel(geo_frame, text="Długość L [m]:    ").grid(row=1, column=0, sticky="w", pady=3)
+        self.room_l = ctk.CTkEntry(geo_frame, width=100)
+        self.room_l.insert(0, "7.0")
+        self.room_l.grid(row=1, column=1, sticky="ew", padx=5)
+
+        ctk.CTkLabel(geo_frame, text="Wysokość H [m]:    ").grid(row=2, column=0, sticky="w", pady=3)
+        self.room_h = ctk.CTkEntry(geo_frame, width=100)
+        self.room_h.insert(0, "2.7")
+        self.room_h.grid(row=2, column=1, sticky="ew", padx=5)
+
+        # =========================================================
+        # 2) WSPÓŁCZYNNIKI POCHŁANIANIA – TABELA
+        # =========================================================
+        section_abs = ctk.CTkLabel(
+            gen_frame,
+            text="Pochłanianie powierzchni",
+            font=("Roboto", 20, "bold")
+        )
+        section_abs.grid(row=4, column=0, sticky="w", pady=(10, 5), padx=10)
+
+        # Zewnętrzna ramka na całą szerokość
+        abs_outer = ctk.CTkFrame(gen_frame)
+        abs_outer.grid(row=5, column=0, sticky="ew", padx=10, pady=(0, 15))
+        abs_outer.grid_columnconfigure(0, weight=1)
+
+        # Właściwa tabela – będzie wyśrodkowana w abs_outer
+        abs_frame = ctk.CTkFrame(abs_outer)
+        abs_frame.grid(row=0, column=0)
+
+        freqs = ["125", "250", "500", "1k", "2k", "4k"]
+        surfaces = ["Ściany", "Sufit", "Podłoga"]
+
+        # Nagłówki kolumn
+        ctk.CTkLabel(abs_frame, text="").grid(row=0, column=0, padx=5)
+        for i, f in enumerate(freqs):
+            ctk.CTkLabel(abs_frame, text=f"{f} Hz").grid(row=0, column=i + 1, padx=10)
+
+        self.abs_entries = {}
+
+        for r, surf in enumerate(surfaces):
+            ctk.CTkLabel(abs_frame, text=surf).grid(row=r + 1, column=0, padx=10, pady=5, sticky="w")
+            for c, f in enumerate(freqs):
+                e = ctk.CTkEntry(abs_frame, width=60)
+                e.insert(0, "0.20")
+                e.grid(row=r + 1, column=c + 1, padx=5, pady=5)
+                self.abs_entries[(surf, f)] = e
+
+        # =========================================================
+        # 3) PARAMETRY WCZESNYCH ODBIĆ (FDN)
+        # =========================================================
+        section_fdn = ctk.CTkLabel(gen_frame, text="Wczesne odbicia (FDN)", font=("Roboto", 20, "bold"))
+        section_fdn.grid(row=6, column=0, sticky="w", pady=(10, 5), padx=10)
+
+        fdn_frame = ctk.CTkFrame(gen_frame)
+        fdn_frame.grid(row=7, column=0, sticky="ew", padx=10, pady=(0, 15))
+        fdn_frame.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(fdn_frame, text="Liczba promieni:    ").grid(row=0, column=0, sticky="w", pady=5)
+        self.rays_entry = ctk.CTkEntry(fdn_frame, width=80)
+        self.rays_entry.insert(0, "8")
+        self.rays_entry.grid(row=0, column=1, sticky="w")
+
+        ctk.CTkLabel(fdn_frame, text="Liczba odbić/promień:     ").grid(row=1, column=0, sticky="w", pady=5)
+        self.reflections_entry = ctk.CTkEntry(fdn_frame, width=80)
+        self.reflections_entry.insert(0, "20")
+        self.reflections_entry.grid(row=1, column=1, sticky="w")
+
+        ctk.CTkLabel(fdn_frame, text="Rozrzut pierwszego odbicia [%]:     ").grid(row=2, column=0, sticky="w", pady=5)
+        self.first_dev_entry = ctk.CTkEntry(fdn_frame, width=80)
+        self.first_dev_entry.insert(0, "15")
+        self.first_dev_entry.grid(row=2, column=1, sticky="w")
+
+        ctk.CTkLabel(fdn_frame, text="Rozrzut mean free path [%]:    ").grid(row=3, column=0, sticky="w", pady=5)
+        self.mfp_dev_entry = ctk.CTkEntry(fdn_frame, width=80)
+        self.mfp_dev_entry.insert(0, "10")
+        self.mfp_dev_entry.grid(row=3, column=1, sticky="w")
+
+        # =========================================================
+        # 4) PARAMETRY PÓŹNEGO POGŁOSU (T60)
+        # =========================================================
+        section_t60 = ctk.CTkLabel(gen_frame, text="Późny pogłos (T60)", font=("Roboto", 20, "bold"))
+        section_t60.grid(row=8, column=0, sticky="w", pady=(10, 5), padx=10)
+
+        t60_frame = ctk.CTkFrame(gen_frame)
+        t60_frame.grid(row=9, column=0, sticky="ew", padx=10, pady=(0, 15))
+        t60_frame.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(t60_frame, text="Tryb obliczania T60:").grid(row=0, column=0, sticky="w", pady=5)
+
+        self.t60_mode = ctk.StringVar(value="auto")
+        self.t60_auto = ctk.CTkRadioButton(
+            t60_frame, text="Auto (Sabine)", variable=self.t60_mode, value="auto",
+            command=self._toggle_t60_manual
+        )
+        self.t60_auto.grid(row=0, column=2, sticky="w")
+
+        self.t60_manual = ctk.CTkRadioButton(
+            t60_frame, text="Ręczne", variable=self.t60_mode, value="manual",
+            command=self._toggle_t60_manual
+        )
+        self.t60_manual.grid(row=0, column=3, sticky="w", padx=15)
+
+        # Tabela T60 manual
+        self.t60_entries = {}
+        t60_freqs = ["125", "250", "500", "1k", "2k", "4k"]
+
+        t60_table = ctk.CTkFrame(t60_frame)
+        t60_table.grid(row=1, column=0, columnspan=3, pady=10)
+
+        ctk.CTkLabel(t60_table, text="Czas pogłosu T60 [s]").grid(row=0, column=0, columnspan=7, pady=5)
+
+        ctk.CTkLabel(t60_table, text="").grid(row=1, column=0)
+        for i, f in enumerate(t60_freqs):
+            ctk.CTkLabel(t60_table, text=f"{f} Hz").grid(row=1, column=i + 1, padx=10)
+
+        for i, f in enumerate(t60_freqs):
+            e = ctk.CTkEntry(t60_table, width=60)
+            e.insert(0, "0.6")
+            e.grid(row=2, column=i + 1, padx=5, pady=5)
+            self.t60_entries[f] = e
+
+        # Domyślnie pola manual T60 są zablokowane
+        for e in self.t60_entries.values():
+            e.configure(state="disabled")
 
     # =====================================================================
     # --- DEVICE HANDLING (jak wcześniej) ---
     # =====================================================================
+
+    def _toggle_t60_manual(self):
+        manual = (self.t60_mode.get() == "manual")
+        for e in self.t60_entries.values():
+            e.configure(state="normal" if manual else "disabled")
 
     def stop_input_monitor(self):
         """Bezpieczne zatrzymanie miernika wejścia."""
