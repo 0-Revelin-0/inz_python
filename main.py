@@ -24,6 +24,8 @@ from matplotlib.ticker import ScalarFormatter
 #---------- Integracja między plikami ----------
 from measurement_engine import measure_ir
 from spl_calibration import PinkNoisePlayer, measure_input_level, InputLevelMonitor
+from synthesis_engine import generate_synthetic_ir_from_config
+
 
 #---------- Zaciąganie theme w .exe i .py ----------
 def resource_path(relative_path: str) -> str:
@@ -1267,9 +1269,113 @@ class GeneratorPage(ctk.CTkFrame):
         self.mix_label.configure(text=f"Early: {early}%   Late: {late}%")
 
     def _on_generate_ir_clicked(self):
-        # Tu później podłączysz engine generowania IR,
-        # na razie tylko placeholder.
-        print("GENEROWANIE IR – tutaj podłączysz kod generujący IR")
+        """Obsługa przycisku 'Generuj IR' – wywołuje silnik syntezy."""
+        # 1) Pobierz ustawienia generatora z SettingsPage
+        try:
+            config = self.controller.get_generator_config()
+        except Exception as e:
+            print(f"[GeneratorPage] Błąd pobierania konfiguracji generatora: {e}")
+            return
+
+        if config is None:
+            print("[GeneratorPage] Brak konfiguracji generatora.")
+            return
+
+        # 2) Parametry z GeneratorPage (długość IR + Early/Late)
+        try:
+            ir_duration = float(self.ir_length_entry.get().replace(",", "."))
+            if ir_duration <= 0:
+                ir_duration = 3.0
+        except Exception:
+            ir_duration = 3.0
+
+        early_percent = float(self.mix_slider.get())
+        early_fraction = early_percent / 100.0
+
+        # 3) Wywołanie silnika syntezy
+        try:
+            ir, fs = generate_synthetic_ir_from_config(
+                config=config,
+                early_fraction=early_fraction,
+                ir_duration_s=ir_duration,
+            )
+        except Exception as e:
+            print(f"[GeneratorPage] Błąd generowania IR: {e}")
+            return
+
+        # 4) Zapis do pliku WAV
+        output_dir = self.ir_output_var.get().strip()
+        if output_dir:
+            out_dir_path = Path(output_dir)
+        else:
+            out_dir_path = Path.home()
+
+        # Nazwa pliku: IR_SYN_{fs}Hz_{T}s_E{early}_L{late}_{timestamp}.wav
+        import time as _time
+        ts = _time.strftime("%Y%m%d_%H%M%S")
+        early_int = int(round(early_percent))
+        late_int = 100 - early_int
+        filename = f"IR_SYN_{fs}Hz_{ir_duration:.2f}s_E{early_int}_L{late_int}_{ts}.wav"
+        full_path = out_dir_path / filename
+
+        try:
+            sf.write(full_path, ir, fs)
+            print(f"[GeneratorPage] Zapisano IR do pliku: {full_path}")
+        except Exception as e:
+            print(f"[GeneratorPage] Nie udało się zapisać IR: {e}")
+
+        # 5) Obliczenie charakterystyki amplitudowej
+        try:
+            from measurement_engine import compute_mag_response, smooth_mag_response
+            freqs, mag_db = compute_mag_response(ir, fs)
+
+            smoothing = self.controller.get_smoothing_fraction()
+            if smoothing is None:
+                mag_plot = mag_db
+            else:
+                try:
+                    mag_plot = smooth_mag_response(freqs, mag_db, fraction=smoothing)
+                except Exception:
+                    mag_plot = mag_db
+        except Exception as e:
+            print(f"[GeneratorPage] Błąd liczenia magnitude: {e}")
+            freqs = None
+            mag_plot = None
+
+        # 6) Aktualizacja wykresów w GeneratorPage
+        # ---- IR ----
+        t = np.arange(len(ir)) / fs
+
+        self.ax_ir.cla()
+        self.ax_ir.set_facecolor("#111111")
+        self.ax_ir.grid(True, color="#444444", alpha=0.3)
+        self.ax_ir.set_title("Impulse Response (Generated)", color="white")
+        self.ax_ir.set_xlabel("Czas [s]", color="white")
+        self.ax_ir.set_ylabel("Amplituda", color="white")
+
+        MAX_PLOT_POINTS = 20000
+        if len(ir) > MAX_PLOT_POINTS:
+            factor = len(ir) // MAX_PLOT_POINTS
+            ir_plot = ir[::factor]
+            t_plot = t[::factor]
+        else:
+            ir_plot = ir
+            t_plot = t
+
+        self.ax_ir.plot(t_plot, ir_plot, linewidth=0.9, color="#4fc3f7")
+
+        # ---- MAGNITUDE ----
+        self.ax_mag.cla()
+        self.ax_mag.set_facecolor("#111111")
+        self.ax_mag.grid(True, color="#444444", alpha=0.3)
+        self.ax_mag.set_title("Magnitude Response (Generated)", color="white")
+        self.ax_mag.set_xlabel("Częstotliwość [Hz]", color="white")
+        self.ax_mag.set_ylabel("Poziom [dB]", color="white")
+
+        if freqs is not None and mag_plot is not None:
+            self.ax_mag.semilogx(freqs, mag_plot, linewidth=1.5, color="#009688")
+
+        self.canvas.draw_idle()
 
     def _choose_output_path(self):
         # wybór KATALOGU – logika zapisu w engine
@@ -1605,7 +1711,7 @@ class SettingsPage(ctk.CTkFrame):
 
         ctk.CTkLabel(fdn_frame, text="Rozrzut pierwszego odbicia [%]:     ").grid(row=2, column=0, sticky="w", pady=5)
         self.first_dev_entry = ctk.CTkEntry(fdn_frame, width=80)
-        self.first_dev_entry.insert(0, "15")
+        self.first_dev_entry.insert(0, "50")
         self.first_dev_entry.grid(row=2, column=1, sticky="w")
 
         ctk.CTkLabel(fdn_frame, text="Rozrzut mean free path [%]:    ").grid(row=3, column=0, sticky="w", pady=5)
@@ -1613,62 +1719,190 @@ class SettingsPage(ctk.CTkFrame):
         self.mfp_dev_entry.insert(0, "10")
         self.mfp_dev_entry.grid(row=3, column=1, sticky="w")
 
-        # =========================================================
-        # 4) PARAMETRY PÓŹNEGO POGŁOSU (T60)
-        # =========================================================
-        section_t60 = ctk.CTkLabel(gen_frame, text="Późny pogłos (T60)", font=("Roboto", 20, "bold"))
-        section_t60.grid(row=8, column=0, sticky="w", pady=(10, 5), padx=10)
-
-        t60_frame = ctk.CTkFrame(gen_frame)
-        t60_frame.grid(row=9, column=0, sticky="ew", padx=10, pady=(0, 15))
-        t60_frame.grid_columnconfigure(1, weight=1)
-
-        ctk.CTkLabel(t60_frame, text="Tryb obliczania T60:").grid(row=0, column=0, sticky="w", pady=5)
-
-        self.t60_mode = ctk.StringVar(value="auto")
-        self.t60_auto = ctk.CTkRadioButton(
-            t60_frame, text="Auto (Sabine)", variable=self.t60_mode, value="auto",
-            command=self._toggle_t60_manual
-        )
-        self.t60_auto.grid(row=0, column=2, sticky="w")
-
-        self.t60_manual = ctk.CTkRadioButton(
-            t60_frame, text="Ręczne", variable=self.t60_mode, value="manual",
-            command=self._toggle_t60_manual
-        )
-        self.t60_manual.grid(row=0, column=3, sticky="w", padx=15)
-
-        # Tabela T60 manual
-        self.t60_entries = {}
-        t60_freqs = ["125", "250", "500", "1k", "2k", "4k"]
-
-        t60_table = ctk.CTkFrame(t60_frame)
-        t60_table.grid(row=1, column=0, columnspan=3, pady=10)
-
-        ctk.CTkLabel(t60_table, text="Czas pogłosu T60 [s]").grid(row=0, column=0, columnspan=7, pady=5)
-
-        ctk.CTkLabel(t60_table, text="").grid(row=1, column=0)
-        for i, f in enumerate(t60_freqs):
-            ctk.CTkLabel(t60_table, text=f"{f} Hz").grid(row=1, column=i + 1, padx=10)
-
-        for i, f in enumerate(t60_freqs):
-            e = ctk.CTkEntry(t60_table, width=60)
-            e.insert(0, "0.6")
-            e.grid(row=2, column=i + 1, padx=5, pady=5)
-            self.t60_entries[f] = e
-
-        # Domyślnie pola manual T60 są zablokowane
-        for e in self.t60_entries.values():
-            e.configure(state="disabled")
+        # # =========================================================
+        # # 4) PARAMETRY PÓŹNEGO POGŁOSU (T60)
+        # # =========================================================
+        # section_t60 = ctk.CTkLabel(gen_frame, text="Późny pogłos (T60)", font=("Roboto", 20, "bold"))
+        # section_t60.grid(row=8, column=0, sticky="w", pady=(10, 5), padx=10)
+        #
+        # t60_frame = ctk.CTkFrame(gen_frame)
+        # t60_frame.grid(row=9, column=0, sticky="ew", padx=10, pady=(0, 15))
+        # t60_frame.grid_columnconfigure(1, weight=1)
+        #
+        # ctk.CTkLabel(t60_frame, text="Tryb obliczania T60:").grid(row=0, column=0, sticky="w", pady=5)
+        #
+        # self.t60_mode = ctk.StringVar(value="auto")
+        # self.t60_auto = ctk.CTkRadioButton(
+        #     t60_frame, text="Auto (Sabine)", variable=self.t60_mode, value="auto",
+        #     command=self._toggle_t60_manual
+        # )
+        # self.t60_auto.grid(row=0, column=2, sticky="w")
+        #
+        # self.t60_manual = ctk.CTkRadioButton(
+        #     t60_frame, text="Ręczne", variable=self.t60_mode, value="manual",
+        #     command=self._toggle_t60_manual
+        # )
+        # self.t60_manual.grid(row=0, column=3, sticky="w", padx=15)
+        #
+        # # Tabela T60 manual
+        # self.t60_entries = {}
+        # t60_freqs = ["125", "250", "500", "1k", "2k", "4k"]
+        #
+        # t60_table = ctk.CTkFrame(t60_frame)
+        # t60_table.grid(row=1, column=0, columnspan=3, pady=10)
+        #
+        # ctk.CTkLabel(t60_table, text="Czas pogłosu T60 [s]").grid(row=0, column=0, columnspan=7, pady=5)
+        #
+        # ctk.CTkLabel(t60_table, text="").grid(row=1, column=0)
+        # for i, f in enumerate(t60_freqs):
+        #     ctk.CTkLabel(t60_table, text=f"{f} Hz").grid(row=1, column=i + 1, padx=10)
+        #
+        # for i, f in enumerate(t60_freqs):
+        #     e = ctk.CTkEntry(t60_table, width=60)
+        #     e.insert(0, "0.6")
+        #     e.grid(row=2, column=i + 1, padx=5, pady=5)
+        #     self.t60_entries[f] = e
+        #
+        # # Domyślnie pola manual T60 są zablokowane
+        # for e in self.t60_entries.values():
+        #     e.configure(state="disabled")
 
     # =====================================================================
     # --- DEVICE HANDLING (jak wcześniej) ---
     # =====================================================================
 
-    def _toggle_t60_manual(self):
-        manual = (self.t60_mode.get() == "manual")
-        for e in self.t60_entries.values():
-            e.configure(state="normal" if manual else "disabled")
+    def get_generator_config(self):
+        """
+        Zwraca słownik z ustawieniami generowania IR z zakładki
+        'Ustawienia generowania'.
+
+        Słownik zawiera:
+          - fs              : int, sample rate [Hz]
+          - room_dims       : (W, L, H) [m]
+          - alpha_walls     : lista 6 wartości (125..4k Hz)
+          - alpha_ceiling   : lista 6 wartości
+          - alpha_floor     : lista 6 wartości
+          - t60_mode        : 'auto' lub 'manual'
+          - t60_manual      : lista 6 wartości lub None
+          - rays_no         : int
+          - reflections_no  : int
+          - first_dev_percent : float (% mfp)
+          - mfp_dev_percent   : float (% mfp)
+        """
+        # Sample rate
+        try:
+            fs = int(self.gen_sample_rate_combo.get())
+        except Exception:
+            fs = 48000
+
+        # Geometria
+        def _read_float(entry, default):
+            try:
+                v = float(entry.get().replace(",", "."))
+                return v
+            except Exception:
+                return default
+
+        W = _read_float(self.room_w, 5.0)
+        L = _read_float(self.room_l, 7.0)
+        H = _read_float(self.room_h, 2.7)
+
+        room_dims = (W, L, H)
+
+        # Pochłanianie w pasmach oktawowych
+        freqs = ["125", "250", "500", "1k", "2k", "4k"]
+
+        alpha_walls = []
+        alpha_ceiling = []
+        alpha_floor = []
+
+        for f in freqs:
+            # Ściany
+            try:
+                a_w = float(self.abs_entries[("Ściany", f)].get().replace(",", "."))
+            except Exception:
+                a_w = 0.2
+            # Sufit
+            try:
+                a_su = float(self.abs_entries[("Sufit", f)].get().replace(",", "."))
+            except Exception:
+                a_su = 0.2
+            # Podłoga
+            try:
+                a_po = float(self.abs_entries[("Podłoga", f)].get().replace(",", "."))
+            except Exception:
+                a_po = 0.2
+
+            # Ograniczenie do [0, 1]
+            a_w = max(0.0, min(1.0, a_w))
+            a_su = max(0.0, min(1.0, a_su))
+            a_po = max(0.0, min(1.0, a_po))
+
+            alpha_walls.append(a_w)
+            alpha_ceiling.append(a_su)
+            alpha_floor.append(a_po)
+
+        # T60: auto / manual
+        mode = self.t60_mode.get() if hasattr(self, "t60_mode") else "auto"
+        t60_manual = None
+        if mode == "manual":
+            t60_vals = []
+            for f in freqs:
+                entry = self.t60_entries.get(f)
+                if entry is None:
+                    t60_vals.append(0.5)
+                else:
+                    try:
+                        v = float(entry.get().replace(",", "."))
+                        if v <= 0:
+                            v = 0.5
+                    except Exception:
+                        v = 0.5
+                    t60_vals.append(v)
+            t60_manual = t60_vals
+
+        # FDN – parametry wczesnych odbić
+        try:
+            rays_no = int(self.rays_entry.get())
+            if rays_no <= 0:
+                rays_no = 8
+        except Exception:
+            rays_no = 8
+
+        try:
+            reflections_no = int(self.reflections_entry.get())
+            if reflections_no <= 0:
+                reflections_no = 20
+        except Exception:
+            reflections_no = 20
+
+        try:
+            first_dev_percent = float(self.first_dev_entry.get().replace(",", "."))
+        except Exception:
+            first_dev_percent = 20.0
+
+        try:
+            mfp_dev_percent = float(self.mfp_dev_entry.get().replace(",", "."))
+        except Exception:
+            mfp_dev_percent = 50.0
+
+        return {
+            "fs": fs,
+            "room_dims": room_dims,
+            "alpha_walls": alpha_walls,
+            "alpha_ceiling": alpha_ceiling,
+            "alpha_floor": alpha_floor,
+            "rays_no": rays_no,
+            "reflections_no": reflections_no,
+            "first_dev_percent": first_dev_percent,
+            "mfp_dev_percent": mfp_dev_percent,
+        }
+
+
+    # def _toggle_t60_manual(self):
+    #     manual = (self.t60_mode.get() == "manual")
+    #     for e in self.t60_entries.values():
+    #         e.configure(state="normal" if manual else "disabled")
 
     def stop_input_monitor(self):
         """Bezpieczne zatrzymanie miernika wejścia."""
@@ -2100,6 +2334,12 @@ class EasyIResponseApp(ctk.CTk):
     def get_ir_window_ms(self):
         settings_page = self.pages["settings"]
         return settings_page.get_ir_window_ms()
+
+    def get_generator_config(self):
+        """Proxy do SettingsPage.get_generator_config()."""
+        settings_page = self.pages["settings"]
+        return settings_page.get_generator_config()
+
 
     def _safe_close(self):
         # 1. Stop input meter
