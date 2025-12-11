@@ -563,15 +563,17 @@ class ConvolutionPage(ctk.CTkFrame):
     # =============================================================
     def _start_convolution(self):
         """Start splotu audio w osobnym wątku."""
+        import threading
+        import time
 
         mode = self.mode_var.get()
         audio_path = self.audio_var.get().strip()
         ir1_path = self.ir1_var.get().strip()
         ir2_path = self.ir2_var.get().strip()
-        output_path = self.output_var.get().strip()
+        output_target = self.output_var.get().strip()  # to, co wpisał/wybrał użytkownik
         wet = float(self.wetdry_var.get())
 
-        # Walidacja podstawowa
+        # --- Walidacja podstawowa ---
         if not audio_path:
             show_error("Wybierz plik audio.")
             return
@@ -585,65 +587,111 @@ class ConvolutionPage(ctk.CTkFrame):
                 show_error("W trybie Stereo wybierz IR Left oraz IR Right.")
                 return
 
-        # Przeliczenie Wet/Dry na 0..1
+        # --- Wet/Dry w [0..1] ---
         wet_frac = max(0.0, min(1.0, wet / 100.0))
 
-        # Jeśli użytkownik wpisał katalog zamiast pliku → generujemy nazwę pliku
-        if os.path.isdir(output_path):
-            base_name = os.path.splitext(os.path.basename(audio_path))[0]
-            suffix = "_conv_mono" if mode == "Mono" else "_conv"
-            output_path = os.path.join(output_path, base_name + suffix + ".wav")
-            self.output_var.set(output_path)
+        # =========================================================
+        # USTALANIE KATALOGU I NAZWY PLIKU
+        # =========================================================
+        # 1) Katalog wyjściowy:
+        #    - jeśli user wybrał katalog w GUI → bierzemy go
+        #    - jeśli nic nie podał → katalog pliku audio
+        #    - jeśli podał pełną ścieżkę z nazwą pliku → użyjemy jej DOSŁOWNIE
+        manual_filename = None
 
-        # UI – blokada przycisku i status
+        if output_target and os.path.isdir(output_target):
+            # użytkownik wskazał katalog
+            out_dir = output_target
+        elif output_target:
+            # użytkownik wpisał swoją nazwę pliku (np. C:\...\moj_plik.wav)
+            out_dir = os.path.dirname(output_target) or os.path.dirname(audio_path)
+            manual_filename = os.path.basename(output_target)
+        else:
+            # nic nie podał → bierzemy katalog pliku audio
+            out_dir = os.path.dirname(audio_path)
+            manual_filename = None
+
+        # 2) Nazwa pliku:
+        if manual_filename:
+            # użytkownik wymusił własną nazwę
+            out_path = os.path.join(out_dir, manual_filename)
+        else:
+            # auto-nazwa: nazwa_audio + tryb + data/godzina + wet
+            base = os.path.splitext(os.path.basename(audio_path))[0]
+            ts = time.strftime("%Y-%m-%d_%H-%M-%S")
+            wet_int = int(round(wet))
+            mode_suffix = "mono" if mode == "Mono" else "stereo"
+            filename = f"{base}_conv_{mode_suffix}_{ts}_wet{wet_int}.wav"
+            out_path = os.path.join(out_dir, filename)
+
+        # 3) Co pokazać w polu "Plik wynikowy":
+        #    - jeśli user wybrał katalog / nic nie podał → pokazujemy katalog
+        #    - jeśli podał swoją nazwę pliku → zostawiamy jak jest
+        if output_target and os.path.isdir(output_target):
+            self.output_var.set(out_dir)
+        elif not output_target:
+            self.output_var.set(out_dir)
+
+        # --- UI – blokada przycisku i status ---
         self.start_button.configure(state="disabled")
         self.status_label.configure(text="Trwa splot audio...")
 
         def worker():
             try:
                 if mode == "Mono":
-                    out_path = convolve_audio_files(
+                    out_file = convolve_audio_files(
                         audio_path=audio_path,
                         mode="Mono",
                         ir_mono_path=ir1_path,
                         wet=wet_frac,
-                        output_path=output_path,
+                        output_path=out_path,
                     )
                 else:
-                    out_path = convolve_audio_files(
+                    out_file = convolve_audio_files(
                         audio_path=audio_path,
                         mode="Stereo",
                         ir_left_path=ir1_path,
                         ir_right_path=ir2_path,
                         wet=wet_frac,
-                        output_path=output_path,
+                        output_path=out_path,
                     )
 
-            except Exception as e:
-                err = str(e)
+                # Po skończeniu wczytujemy wynik do podglądu
+                if out_file:
+                    self._load_convolved_audio(out_file)
 
-                def on_error():
-                    show_error(f"Błąd podczas splotu:\n\n{err}")
-                    self.status_label.configure(text="Błąd splotu.")
-                    self.start_button.configure(state="normal")
-
-                self.after(0, on_error)
-                return
-
-            # Sukces
-            def on_success():
-                self.status_label.configure(
-                    text=f"Splot zakończony.\nZapisano plik:\n{out_path}"
+                # Aktualizacja statusu i wykresów w wątku GUI
+                self.after(
+                    0,
+                    lambda: (
+                        self.status_label.configure(
+                            text=f"Splot zakończony.\nZapisano: {os.path.basename(out_file)}"
+                        ),
+                        self.start_button.configure(state="normal"),
+                        self.update_plots(),
+                    ),
                 )
-                self.start_button.configure(state="normal")
-                # wczytujemy wynik i odświeżamy wykresy
-                self._load_convolved_audio(out_path)
-                self.update_plots()
 
-            self.after(0, on_success)
+            except Exception as e:
+                self.after(
+                    0,
+                    lambda: (
+                        show_error(str(e)),
+                        self.start_button.configure(state="normal"),
+                        self.status_label.configure(text="Błąd podczas splotu."),
+                    ),
+                )
+            except Exception as e:
+                self.after(
+                    0,
+                    lambda: (
+                        show_error(f"Nieoczekiwany błąd podczas splotu:\n\n{e}"),
+                        self.start_button.configure(state="normal"),
+                        self.status_label.configure(text="Błąd podczas splotu."),
+                    ),
+                )
 
         threading.Thread(target=worker, daemon=True).start()
-
 
 
 class MeasurementPage(ctk.CTkFrame):
@@ -1495,7 +1543,7 @@ class GeneratorPage(ctk.CTkFrame):
         ctk.CTkButton(
             output_frame,
             text="Wybierz...",
-            command=self._choose_output_path,
+            command=self._choose_output,
             width=110
         ).grid(row=1, column=1, padx=5, pady=5, sticky="e")
 
@@ -1712,14 +1760,11 @@ class GeneratorPage(ctk.CTkFrame):
 
         self.canvas.draw_idle()
 
-    def _choose_output_path(self):
-        # wybór KATALOGU – logika zapisu w engine
-        path = filedialog.askdirectory()
-        if path:
-            self.ir_output_var.set(path)
-
-
-
+    def _choose_output(self):
+        """Wybór KATALOGU, do którego trafią pliki wynikowe."""
+        folder = fd.askdirectory()
+        if folder:
+            self.output_var.set(folder)
 
 
 class InputMonitor:
