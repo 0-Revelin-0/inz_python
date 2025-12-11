@@ -1671,7 +1671,7 @@ class SettingsPage(ctk.CTkFrame):
         abs_frame = ctk.CTkFrame(abs_outer)
         abs_frame.grid(row=0, column=0)
 
-        freqs = ["125", "250", "500", "1k", "2k", "4k"]
+        freqs = ["125", "250", "500", "1k", "2k", "4k", "8k", "16k"]
         surfaces = ["Ściany", "Sufit", "Podłoga"]
 
         # Nagłówki kolumn
@@ -1810,7 +1810,7 @@ class SettingsPage(ctk.CTkFrame):
         room_dims = (W, L, H)
 
         # Pochłanianie w pasmach oktawowych
-        freqs = ["125", "250", "500", "1k", "2k", "4k"]
+        freqs = ["125", "250", "500", "1k", "2k", "4k", "8k", "16k"]
 
         alpha_walls = []
         alpha_ceiling = []

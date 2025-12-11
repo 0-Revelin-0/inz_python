@@ -1,26 +1,29 @@
 import numpy as np
 
 SPEED_OF_SOUND = 343.0  # [m/s]
-CENTER_FREQS = np.array([125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0], dtype=float)
+CENTER_FREQS = np.array(
+    [125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0], dtype=float)
+
 
 
 def compute_room_and_t60(room_dims, alpha_walls, alpha_ceiling, alpha_floor):
     """
     Liczy parametry geometryczne + T60 w pasmach oktawowych metodą Sabine'a.
-    NIE MA trybu manualnego – T60 zawsze pochodzi z pochłaniania.
+    T60 zawsze pochodzi z pochłaniania (brak trybu manualnego).
 
     Parameters
     ----------
     room_dims : tuple(float, float, float)
         (W, L, H) w metrach.
-    alpha_walls, alpha_ceiling, alpha_floor : array-like shape (6,)
-        Współczynniki pochłaniania dla pasm [125..4k].
+    alpha_walls, alpha_ceiling, alpha_floor : array-like shape (N,)
+        Współczynniki pochłaniania dla pasm oktawowych.
+        N powinno być równe len(CENTER_FREQS) = 8.
 
     Returns
     -------
-    alpha_mean : np.ndarray shape (6,)
+    alpha_mean : np.ndarray shape (N,)
         Średni współczynnik pochłaniania w pasmach.
-    t60_bands : np.ndarray shape (6,)
+    t60_bands : np.ndarray shape (N,)
         Czas pogłosu T60 w pasmach.
     mfp : float
         Mean free path [m].
@@ -32,7 +35,7 @@ def compute_room_and_t60(room_dims, alpha_walls, alpha_ceiling, alpha_floor):
     L = float(L)
     H = float(H)
 
-    # Geometria – poprawna objętość
+    # Geometria
     V = W * L * H
     S_su = W * L                   # sufit
     S_po = W * L                   # podłoga
@@ -43,10 +46,19 @@ def compute_room_and_t60(room_dims, alpha_walls, alpha_ceiling, alpha_floor):
     alpha_ceiling = np.asarray(alpha_ceiling, dtype=float)
     alpha_floor = np.asarray(alpha_floor, dtype=float)
 
-    alpha_mean = np.zeros(6, dtype=float)
-    t60_bands = np.zeros(6, dtype=float)
+    # Zakładamy, że wszystkie trzy mają tę samą długość
+    n_bands = len(alpha_walls)
 
-    for i in range(6):
+    if not (len(alpha_ceiling) == n_bands == len(alpha_floor)):
+        raise ValueError(
+            f"Niezgodne długości wektorów alfa: "
+            f"walls={len(alpha_walls)}, ceil={len(alpha_ceiling)}, floor={len(alpha_floor)}"
+        )
+
+    alpha_mean = np.zeros(n_bands, dtype=float)
+    t60_bands = np.zeros(n_bands, dtype=float)
+
+    for i in range(n_bands):
         A_su = alpha_ceiling[i] * S_su
         A_po = alpha_floor[i] * S_po
         A_sc = alpha_walls[i] * S_sc
@@ -74,6 +86,7 @@ def compute_room_and_t60(room_dims, alpha_walls, alpha_ceiling, alpha_floor):
     }
 
     return alpha_mean, t60_bands, mfp, geom
+
 
 
 def _design_fir_bandpass(fs, f_center, num_taps=513):
@@ -144,6 +157,14 @@ def generate_late_reverb(fs, duration_s, t60_bands, mfp):
     # Obwiednie w pasmach
     t60_bands = np.asarray(t60_bands, dtype=float)
     t60_bands = np.maximum(t60_bands, 0.05)  # minimalnie 50 ms
+
+    # Sprawdzenie zgodności liczby pasm T60 z bankiem filtrów
+    if t60_bands.shape[0] != CENTER_FREQS.shape[0]:
+        raise ValueError(
+            f"t60_bands ma {t60_bands.shape[0]} pasm, a CENTER_FREQS {CENTER_FREQS.shape[0]}.\n"
+            "Upewnij się, że w GUI masz tyle samo pasm pochłaniania, co w CENTER_FREQS."
+        )
+
 
     env = 10.0 ** (-3.0 * t[np.newaxis, :] / t60_bands[:, np.newaxis])
 
