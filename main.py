@@ -25,6 +25,7 @@ from matplotlib.ticker import ScalarFormatter
 from measurement_engine import measure_ir
 from spl_calibration import PinkNoisePlayer, measure_input_level, InputLevelMonitor
 from synthesis_engine import generate_synthetic_ir_from_config
+from convolution_engine import convolve_audio_files
 
 
 #---------- Zaciąganie theme w .exe i .py ----------
@@ -122,17 +123,18 @@ class ConvolutionPage(ctk.CTkFrame):
     """
     GUI do splotu audio:
     - Mono / Stereo (dynamicznie zmienia ilość pól IR)
-    - HRTF on/off
+    - HRTF on/off (na razie tylko przełącznik, logika później)
     - Wet/Dry
     - Plik audio
-    - Plik wynikowy przyklejony na dole
+    - Plik wynikowy
+    - Prawa strona: 2 wykresy (IR + splecione audio), jak na innych stronach
     """
 
     def __init__(self, parent, controller):
         super().__init__(parent)
         self.controller = controller
 
-        # ------- Zmienne -------
+        # ------- Zmienne GUI -------
         self.mode_var = ctk.StringVar(value="Mono")
         self.hrtf_var = ctk.BooleanVar(value=False)
 
@@ -142,24 +144,39 @@ class ConvolutionPage(ctk.CTkFrame):
         self.output_var = ctk.StringVar()
         self.wetdry_var = ctk.DoubleVar(value=100.0)
 
+        # aktualnie wybrany kanał do podglądu (L / R)
+        self.current_channel = "L"
+
+        # ------- Dane do wykresów -------
+        self.ir_mono = None
+        self.ir_left = None
+        self.ir_right = None
+        self.ir_fs = None
+
+        self.conv_audio_mono = None
+        self.conv_audio_left = None
+        self.conv_audio_right = None
+        self.conv_fs = None
+
         # ------- Layout główny -------
         self.columnconfigure(0, weight=0)
         self.columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
+        # LEWY panel (ustawienia)
         left = ctk.CTkFrame(self, width=420)
         left.grid(row=0, column=0, padx=(20, 10), pady=20, sticky="nsew")
 
-        # stałe wiersze + jeden rozpychacz
         for r in range(10):
             left.grid_rowconfigure(r, weight=0)
-        left.grid_rowconfigure(8, weight=1)   # pusty wiersz, który dopycha dół
+        left.grid_rowconfigure(8, weight=1)   # rozpychacz
 
-        # Prawy panel (podgląd)
+        # PRAWY panel (wykresy)
         right = ctk.CTkFrame(self)
         right.grid(row=0, column=1, padx=(10, 20), pady=20, sticky="nsew")
         right.grid_columnconfigure(0, weight=1)
-        right.grid_rowconfigure(0, weight=1)
+        right.grid_rowconfigure(0, weight=0)   # panel kanałów
+        right.grid_rowconfigure(1, weight=1)   # wykresy
 
         # ---------------- Tytuł ----------------
         title = ctk.CTkLabel(left, text="🎧  Splot audio", font=("Roboto", 22, "bold"))
@@ -174,7 +191,7 @@ class ConvolutionPage(ctk.CTkFrame):
         )
         self.mode_seg.grid(row=1, column=0, sticky="ew", pady=(5, 15))
 
-        # ---------------- HRTF ----------------
+        # ---------------- HRTF (na przyszłość) ----------------
         self.hrtf_switch = ctk.CTkSwitch(left, text="Użyj HRTF", variable=self.hrtf_var)
         self.hrtf_switch.grid(row=2, column=0, sticky="w", pady=(0, 15))
 
@@ -216,14 +233,7 @@ class ConvolutionPage(ctk.CTkFrame):
 
         self.wetdry_var.trace_add("write", self._update_wetdry_label)
 
-        # ----------- Placeholder podglądu -----------
-        ctk.CTkLabel(
-            right,
-            text="Tu będzie podgląd IR / audio / przebiegów.\nNa razie tylko GUI.",
-            font=("Arial", 18),
-        ).grid(row=0, column=0, sticky="nsew")
-
-        # ---------------- DÓŁ: Plik wynikowy + Start ----------------
+        # ---------------- DÓŁ: Plik wynikowy + Start + Status ----------------
         bottom = ctk.CTkFrame(left)
         bottom.grid(row=9, column=0, sticky="ew", pady=(10, 0))
 
@@ -243,16 +253,82 @@ class ConvolutionPage(ctk.CTkFrame):
         ).pack(side="right")
 
         # Start button
-        ctk.CTkButton(
+        self.start_button = ctk.CTkButton(
             bottom,
             text="▶ Start splotu",
             fg_color="#d71920",
             hover_color="#b01015",
-            command=self._start_placeholder,
-        ).pack(fill="x")
+            command=self._start_convolution,
+        )
+        self.start_button.pack(fill="x", pady=(0, 5))
+
+        # Status splotu
+        self.status_label = ctk.CTkLabel(
+            bottom,
+            text="",
+            font=("Arial", 12),
+            text_color="#cccccc",
+            anchor="w",
+            justify="left",
+        )
+        self.status_label.pack(fill="x", pady=(2, 0))
+
+        # =========================================================
+        # PRAWA STRONA – WYBÓR KANAŁU + WYKRESY
+        # =========================================================
+
+        # Panel wyboru kanału (jak w MeasurementPage)
+        channel_frame = ctk.CTkFrame(right, fg_color="transparent")
+        channel_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 0))
+
+        ctk.CTkLabel(
+            channel_frame,
+            text="Kanał do podglądu:"
+        ).pack(side="left", padx=(0, 10))
+
+        self.channel_selector = ctk.CTkSegmentedButton(
+            channel_frame,
+            values=["L", "R"],
+            command=self._on_channel_change
+        )
+        self.channel_selector.pack(side="left")
+        self.channel_selector.set("L")
+
+        # Figure z dwoma wykresami (IR + audio)
+        self.fig = Figure(
+            figsize=(6, 5),
+            dpi=100,
+            facecolor="#111111",
+            tight_layout=True
+        )
+
+        # Górny: IR
+        self.ax_ir = self.fig.add_subplot(2, 1, 1)
+        self.ax_ir.set_facecolor("#111111")
+        self.ax_ir.grid(True, color="#444444", alpha=0.3)
+        self.ax_ir.set_title("Impulse Response", color="white")
+        self.ax_ir.set_xlabel("Czas [s]", color="white")
+        self.ax_ir.set_ylabel("Amplituda", color="white")
+        self.ax_ir.tick_params(colors="white")
+
+        # Dolny: splecione audio
+        self.ax_audio = self.fig.add_subplot(2, 1, 2)
+        self.ax_audio.set_facecolor("#111111")
+        self.ax_audio.grid(True, color="#444444", alpha=0.3)
+        self.ax_audio.set_title("Convolved audio", color="white")
+        self.ax_audio.set_xlabel("Czas [s]", color="white")
+        self.ax_audio.set_ylabel("Amplituda", color="white")
+        self.ax_audio.tick_params(colors="white")
+
+        # Canvas w prawym panelu
+        self.canvas = FigureCanvasTkAgg(self.fig, master=right)
+        self.canvas_widget = self.canvas.get_tk_widget()
+        self.canvas_widget.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
+
+        self._clear_plots()
 
     # =============================================================
-    # POLA IR – dynamicznie pokazujemy 1 lub 2 OKIENKA
+    # POLA IR – dynamicznie pokazujemy 1 lub 2 okienka
     # =============================================================
     def _update_ir_fields(self, *_):
         for w in self.ir_frame.winfo_children():
@@ -265,6 +341,12 @@ class ConvolutionPage(ctk.CTkFrame):
         else:
             self._make_ir_row(self.ir1_var, "IR Left:")
             self._make_ir_row(self.ir2_var, "IR Right:")
+
+        self._load_ir_data()
+
+        # wywołujemy update_plots TYLKO jeśli wykresy już istnieją
+        if hasattr(self, "ax_ir"):
+            self.update_plots()
 
     def _make_ir_row(self, var, label_text):
         row = ctk.CTkFrame(self.ir_frame)
@@ -285,6 +367,8 @@ class ConvolutionPage(ctk.CTkFrame):
         path = fd.askopenfilename(filetypes=[("WAV", "*.wav")])
         if path:
             var.set(path)
+            self._load_ir_data()
+            self.update_plots()
 
     def _choose_audio(self):
         path = fd.askopenfilename(filetypes=[("WAV", "*.wav")])
@@ -292,9 +376,80 @@ class ConvolutionPage(ctk.CTkFrame):
             self.audio_var.set(path)
 
     def _choose_output(self):
-        path = fd.asksaveasfilename(defaultextension=".wav")
+        path = fd.askdirectory()
         if path:
             self.output_var.set(path)
+
+    # =============================================================
+    # ŁADOWANIE DANYCH DO WYKRESÓW
+    # =============================================================
+    def _load_ir_data(self):
+        """Wczytuje IR z plików do pamięci, żeby można było je wyświetlić."""
+        self.ir_mono = None
+        self.ir_left = None
+        self.ir_right = None
+        self.ir_fs = None
+
+        mode = self.mode_var.get()
+        try:
+            if mode == "Mono":
+                path = self.ir1_var.get().strip()
+                if path and os.path.isfile(path):
+                    data, fs = sf.read(path, always_2d=False)
+                    self.ir_fs = fs
+                    if data.ndim == 1:
+                        self.ir_mono = data.astype(np.float32)
+                    else:
+                        # jeśli ktoś podał stereo IR – bierzemy kanał L
+                        self.ir_mono = data[:, 0].astype(np.float32)
+            else:
+                path_l = self.ir1_var.get().strip()
+                path_r = self.ir2_var.get().strip()
+
+                # Lewa
+                if path_l and os.path.isfile(path_l):
+                    data_l, fs_l = sf.read(path_l, always_2d=False)
+                    self.ir_fs = fs_l
+                    if data_l.ndim == 1:
+                        self.ir_left = data_l.astype(np.float32)
+                    else:
+                        self.ir_left = data_l[:, 0].astype(np.float32)
+
+                # Prawa
+                if path_r and os.path.isfile(path_r):
+                    data_r, fs_r = sf.read(path_r, always_2d=False)
+                    # jeśli oba pliki mają inne fs, do wykresu to nie ma znaczenia
+                    if self.ir_fs is None:
+                        self.ir_fs = fs_r
+                    if data_r.ndim == 1:
+                        self.ir_right = data_r.astype(np.float32)
+                    else:
+                        self.ir_right = data_r[:, 0].astype(np.float32)
+        except Exception as e:
+            show_error(f"Nie udało się wczytać IR do podglądu:\n\n{e}")
+
+    def _load_convolved_audio(self, path):
+        """Wczytuje splecione audio z pliku wynikowego do podglądu."""
+        self.conv_audio_mono = None
+        self.conv_audio_left = None
+        self.conv_audio_right = None
+        self.conv_fs = None
+
+        if not path or not os.path.isfile(path):
+            return
+
+        try:
+            data, fs = sf.read(path, always_2d=False)
+            self.conv_fs = fs
+
+            if data.ndim == 1:
+                self.conv_audio_mono = data.astype(np.float32)
+            else:
+                self.conv_audio_left = data[:, 0].astype(np.float32)
+                if data.shape[1] > 1:
+                    self.conv_audio_right = data[:, 1].astype(np.float32)
+        except Exception as e:
+            show_error(f"Nie udało się wczytać pliku wynikowego do podglądu:\n\n{e}")
 
     # =============================================================
     # WET/DRY label update
@@ -302,12 +457,192 @@ class ConvolutionPage(ctk.CTkFrame):
     def _update_wetdry_label(self, *_):
         self.wetdry_value.configure(text=f"{int(self.wetdry_var.get())}%")
 
-    # Placeholder
-    def _start_placeholder(self):
-        print("Splot będzie tu zaimplementowany.")
+    # =============================================================
+    # OBSŁUGA KANAŁU
+    # =============================================================
+    def _on_channel_change(self, value: str):
+        self.current_channel = value
+        self.update_plots()
 
+    # =============================================================
+    # WYKRESY
+    # =============================================================
+    def _clear_plots(self):
+        # Górny – IR
+        self.ax_ir.cla()
+        self.ax_ir.set_facecolor("#111111")
+        self.ax_ir.grid(True, color="#444444", alpha=0.3)
+        self.ax_ir.set_title("Impulse Response", color="white")
+        self.ax_ir.set_xlabel("Czas [s]", color="white")
+        self.ax_ir.set_ylabel("Amplituda", color="white")
+        self.ax_ir.tick_params(colors="white")
 
+        # Dolny – audio
+        self.ax_audio.cla()
+        self.ax_audio.set_facecolor("#111111")
+        self.ax_audio.grid(True, color="#444444", alpha=0.3)
+        self.ax_audio.set_title("Convolved audio", color="white")
+        self.ax_audio.set_xlabel("Czas [s]", color="white")
+        self.ax_audio.set_ylabel("Amplituda", color="white")
+        self.ax_audio.tick_params(colors="white")
 
+        self.canvas.draw_idle()
+
+    def update_plots(self):
+        """Aktualizuje oba wykresy: IR + splecione audio."""
+        self._clear_plots()
+
+        # ---------------- IR ----------------
+        ir = None
+        fs_ir = self.ir_fs
+
+        mode = self.mode_var.get()
+
+        if mode == "Mono":
+            ir = self.ir_mono
+            channel_label_ir = "Mono"
+        else:
+            if self.current_channel == "R" and self.ir_right is not None:
+                ir = self.ir_right
+                channel_label_ir = "Right"
+            else:
+                ir = self.ir_left
+                channel_label_ir = "Left"
+
+        if ir is not None and fs_ir is not None and len(ir) > 0:
+            t_ir = np.arange(len(ir)) / fs_ir
+
+            MAX_PLOT_POINTS = 20000
+            if len(ir) > MAX_PLOT_POINTS:
+                factor = len(ir) // MAX_PLOT_POINTS
+                ir_plot = ir[::factor]
+                t_ir_plot = t_ir[::factor]
+            else:
+                ir_plot = ir
+                t_ir_plot = t_ir
+
+            self.ax_ir.set_title(f"Impulse Response ({channel_label_ir})", color="white")
+            self.ax_ir.plot(t_ir_plot, ir_plot, linewidth=0.9, color="#4fc3f7")
+
+        # ---------------- CONVOLVED AUDIO ----------------
+        audio = None
+        fs_a = self.conv_fs
+        channel_label_audio = "Mono"
+
+        if self.conv_audio_mono is not None:
+            audio = self.conv_audio_mono
+            channel_label_audio = "Mono"
+        else:
+            # stereo wynik
+            if self.current_channel == "R" and self.conv_audio_right is not None:
+                audio = self.conv_audio_right
+                channel_label_audio = "Right"
+            elif self.conv_audio_left is not None:
+                audio = self.conv_audio_left
+                channel_label_audio = "Left"
+
+        if audio is not None and fs_a is not None and len(audio) > 0:
+            t_a = np.arange(len(audio)) / fs_a
+
+            MAX_PLOT_POINTS = 20000
+            if len(audio) > MAX_PLOT_POINTS:
+                factor = len(audio) // MAX_PLOT_POINTS
+                audio_plot = audio[::factor]
+                t_a_plot = t_a[::factor]
+            else:
+                audio_plot = audio
+                t_a_plot = t_a
+
+            self.ax_audio.set_title(f"Convolved audio ({channel_label_audio})", color="white")
+            self.ax_audio.plot(t_a_plot, audio_plot, linewidth=0.9, color="#009688")
+
+        self.canvas.draw_idle()
+
+    # =============================================================
+    # START SPLOTU
+    # =============================================================
+    def _start_convolution(self):
+        """Start splotu audio w osobnym wątku."""
+
+        mode = self.mode_var.get()
+        audio_path = self.audio_var.get().strip()
+        ir1_path = self.ir1_var.get().strip()
+        ir2_path = self.ir2_var.get().strip()
+        output_path = self.output_var.get().strip()
+        wet = float(self.wetdry_var.get())
+
+        # Walidacja podstawowa
+        if not audio_path:
+            show_error("Wybierz plik audio.")
+            return
+
+        if mode == "Mono":
+            if not ir1_path:
+                show_error("W trybie Mono wybierz plik IR.")
+                return
+        else:  # Stereo
+            if not ir1_path or not ir2_path:
+                show_error("W trybie Stereo wybierz IR Left oraz IR Right.")
+                return
+
+        # Przeliczenie Wet/Dry na 0..1
+        wet_frac = max(0.0, min(1.0, wet / 100.0))
+
+        # Jeśli użytkownik wpisał katalog zamiast pliku → generujemy nazwę pliku
+        if os.path.isdir(output_path):
+            base_name = os.path.splitext(os.path.basename(audio_path))[0]
+            suffix = "_conv_mono" if mode == "Mono" else "_conv"
+            output_path = os.path.join(output_path, base_name + suffix + ".wav")
+            self.output_var.set(output_path)
+
+        # UI – blokada przycisku i status
+        self.start_button.configure(state="disabled")
+        self.status_label.configure(text="Trwa splot audio...")
+
+        def worker():
+            try:
+                if mode == "Mono":
+                    out_path = convolve_audio_files(
+                        audio_path=audio_path,
+                        mode="Mono",
+                        ir_mono_path=ir1_path,
+                        wet=wet_frac,
+                        output_path=output_path,
+                    )
+                else:
+                    out_path = convolve_audio_files(
+                        audio_path=audio_path,
+                        mode="Stereo",
+                        ir_left_path=ir1_path,
+                        ir_right_path=ir2_path,
+                        wet=wet_frac,
+                        output_path=output_path,
+                    )
+
+            except Exception as e:
+                err = str(e)
+
+                def on_error():
+                    show_error(f"Błąd podczas splotu:\n\n{err}")
+                    self.status_label.configure(text="Błąd splotu.")
+                    self.start_button.configure(state="normal")
+
+                self.after(0, on_error)
+                return
+
+            # Sukces
+            def on_success():
+                self.status_label.configure(
+                    text=f"Splot zakończony.\nZapisano plik:\n{out_path}"
+                )
+                self.start_button.configure(state="normal")
+                # wczytujemy wynik i odświeżamy wykresy
+                self._load_convolved_audio(out_path)
+                self.update_plots()
+
+            self.after(0, on_success)
+
+        threading.Thread(target=worker, daemon=True).start()
 
 
 
@@ -887,7 +1222,7 @@ class MeasurementPage(ctk.CTkFrame):
                     if mag_db.ndim == 1:
                         mag_mono = mag_db
                     else:
-                        mag_mono = mag_db[..., 0]
+                        mag_mono = mag_db[:, 0]
 
                     self.last_mag = mag_mono
                     self.last_mag_L = mag_mono
