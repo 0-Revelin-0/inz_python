@@ -332,6 +332,10 @@ class ConvolutionPage(ctk.CTkFrame):
         self.tab_hrtf = self.plot_tabs.add(self.hrtf_tab_name)
         self.plot_tabs.set(self.ir_tab_name)
 
+        # HRTF tab – cały tab zajmuje canvas
+        self.tab_hrtf.grid_rowconfigure(0, weight=1)
+        self.tab_hrtf.grid_columnconfigure(0, weight=1)
+
         # Panel wyboru kanału wewnątrz taba IR
         ir_channel_frame = ctk.CTkFrame(self.tab_ir, fg_color="transparent")
         ir_channel_frame.grid(row=0, column=0, sticky="w", pady=(10, 5), padx=5)
@@ -408,6 +412,7 @@ class ConvolutionPage(ctk.CTkFrame):
         # --- TOP VIEW (azymut) ---
         top_frame = ctk.CTkFrame(panel)
         top_frame.grid(row=1, column=0, sticky="ew", padx=5, pady=(0, 8))
+        top_frame.grid_columnconfigure(0, weight=1)
 
         ctk.CTkLabel(
             top_frame,
@@ -433,6 +438,7 @@ class ConvolutionPage(ctk.CTkFrame):
         # --- SIDE VIEW (elewacja) ---
         side_frame = ctk.CTkFrame(panel)
         side_frame.grid(row=2, column=0, sticky="ew", padx=5, pady=(0, 5))
+        side_frame.grid_columnconfigure(0, weight=1)
 
         ctk.CTkLabel(
             side_frame,
@@ -528,37 +534,138 @@ class ConvolutionPage(ctk.CTkFrame):
     # =============================================================
     # FIGURA HRTF (PRAWY TAB "HRTF")
     # =============================================================
+    # =============================================================
+    # PANEL HRTF – suwaki + reset (LEWY PANEL)
+    # =============================================================
+    def _create_hrtf_panel(self, parent):
+        """
+        Tworzy panel z ustawieniami HRTF (Top view + Side view),
+        ale NIE pakuje go jeszcze w grid – tym zajmuje się _on_hrtf_toggle().
+        """
+        self.hrtf_panel_row = 8  # pod przełącznikiem HRTF
+
+        panel = ctk.CTkFrame(parent)
+        self.hrtf_panel = panel
+
+        # panel ma jedną kolumnę na pełną szerokość
+        panel.grid_columnconfigure(0, weight=1)
+
+        # --- NAGŁÓWEK ---
+        ctk.CTkLabel(
+            panel,
+            text="HRTF – kierunek źródła",
+            font=("Arial", 14, "bold")
+        ).grid(row=0, column=0, sticky="w", padx=5, pady=(5, 5))
+
+        # =================================================================
+        # TOP VIEW (azymut) – wewnątrz top_frame używamy PACK, nie GRID
+        # =================================================================
+        top_frame = ctk.CTkFrame(panel)
+        top_frame.grid(row=1, column=0, sticky="ew", padx=5, pady=(0, 8))
+
+        # etykieta nad suwakiem
+        top_label = ctk.CTkLabel(
+            top_frame,
+            text="Widok z góry (Top view) – azymut:"
+        )
+        top_label.pack(anchor="w", pady=(5, 2))
+
+        # suwak na PEŁNĄ szerokość frame’u
+        self.hrtf_az_slider = ctk.CTkSlider(
+            top_frame,
+            from_=-180,
+            to=180,
+            number_of_steps=360,
+            command=self._on_az_slider,
+        )
+        self.hrtf_az_slider.set(0.0)
+        self.hrtf_az_slider.pack(fill="x", expand=True, padx=(0, 5))
+
+        # etykieta z aktualną wartością
+        self.hrtf_az_label = ctk.CTkLabel(
+            top_frame,
+            text="Azymut: 0°"
+        )
+        self.hrtf_az_label.pack(anchor="w", pady=(2, 5))
+
+        # =================================================================
+        # SIDE VIEW (elewacja) – analogicznie: PACK w side_frame
+        # =================================================================
+        side_frame = ctk.CTkFrame(panel)
+        side_frame.grid(row=2, column=0, sticky="ew", padx=5, pady=(0, 5))
+
+        side_label = ctk.CTkLabel(
+            side_frame,
+            text="Widok z boku (Side view) – elewacja:"
+        )
+        side_label.pack(anchor="w", pady=(5, 2))
+
+        self.hrtf_el_slider = ctk.CTkSlider(
+            side_frame,
+            from_=-40,
+            to=90,
+            number_of_steps=130,
+            command=self._on_el_slider,
+        )
+        self.hrtf_el_slider.set(0.0)
+        self.hrtf_el_slider.pack(fill="x", expand=True, padx=(0, 5))
+
+        self.hrtf_el_label = ctk.CTkLabel(
+            side_frame,
+            text="Elewacja: 0°"
+        )
+        self.hrtf_el_label.pack(anchor="w", pady=(2, 5))
+
+        # --- PRZYCISK RESET ---
+        reset_btn = ctk.CTkButton(
+            panel,
+            text="Reset do przodu (0°, 0°)",
+            width=140,
+            command=self._reset_hrtf_angles
+        )
+        reset_btn.grid(row=3, column=0, sticky="w", padx=5, pady=(5, 8))
+
     def _create_hrtf_view_figure(self, parent):
-        """
-        Tworzy figure Matplotlib z dwoma widokami:
-        - górny: Top view (azymut)
-        - dolny: Side view (elewacja)
-        """
+        """Tworzy figury HRTF (widok z góry + z boku)."""
+
+        # tab ma jedną komórkę, która ma się wypełniać w całości
+        parent.grid_rowconfigure(0, weight=1)
+        parent.grid_columnconfigure(0, weight=1)
+
         self.hrtf_fig = Figure(
-            figsize=(6, 5),
+            figsize=(5, 6),
             dpi=100,
             facecolor="#111111",
-            tight_layout=True
         )
 
+        # ręcznie ustawiamy marginesy i odstęp między subplotami,
+        # zamiast używać tight_layout (który obcinał dół)
+        self.hrtf_fig.subplots_adjust(
+            left=0.05,
+            right=0.95,
+            top=0.95,
+            bottom=0.06,
+            hspace=0.35
+        )
+
+        # --- TOP VIEW ---
         self.ax_top = self.hrtf_fig.add_subplot(2, 1, 1)
+        self.ax_top.set_facecolor("#111111")
+        self.ax_top.set_aspect("equal", "box")
+        self.ax_top.axis("off")
+
+        # --- SIDE VIEW ---
         self.ax_side = self.hrtf_fig.add_subplot(2, 1, 2)
+        self.ax_side.set_facecolor("#111111")
+        self.ax_side.set_aspect("equal", "box")
+        self.ax_side.axis("off")
 
-        for ax in (self.ax_top, self.ax_side):
-            ax.set_facecolor("#111111")
-            ax.tick_params(colors="white")
-            ax.grid(False)
-
-        self.ax_top.set_title("HRTF – widok z góry (azymut)", color="white")
-        self.ax_side.set_title("HRTF – widok z boku (elewacja)", color="white")
-
+        # Canvas wypełnia cały tab
         self.hrtf_canvas = FigureCanvasTkAgg(self.hrtf_fig, master=parent)
-        self.tab_hrtf.grid_rowconfigure(0, weight=1)
-        self.tab_hrtf.grid_columnconfigure(0, weight=1)
-
         self.hrtf_canvas_widget = self.hrtf_canvas.get_tk_widget()
         self.hrtf_canvas_widget.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
 
+        # pierwszy rysunek
         self._update_hrtf_plots()
 
     def _update_hrtf_plots(self):
@@ -586,6 +693,12 @@ class ConvolutionPage(ctk.CTkFrame):
         self.ax_top.set_xlim(-1.2, 1.2)
         self.ax_top.set_ylim(-1.2, 1.2)
         self.ax_top.axis("off")
+
+        # --- OPISY KIERUNKÓW (TOP VIEW) ---
+        self.ax_top.text(0, 1.10, "PRZÓD", color="white", ha="center", va="center", fontsize=10)
+        self.ax_top.text(0, -1.15, "TYŁ", color="white", ha="center", va="center", fontsize=10)
+        self.ax_top.text(1.32, 0, "PRAWO", color="white", ha="center", va="center", fontsize=10)
+        self.ax_top.text(-1.32, 0, "LEWO", color="white", ha="center", va="center", fontsize=10)
 
         # koło (obrys głowy / sfery)
         self.ax_top.plot(np.cos(theta), np.sin(theta), color="#aaaaaa", linewidth=1.0)
@@ -618,6 +731,17 @@ class ConvolutionPage(ctk.CTkFrame):
             color="#4fc3f7"
         )
 
+        # --- PIONOWA LINIA PRZERYWANA (TOP VIEW) ---
+        # linia pionowa x = 0, od -1 do 1 (dokładnie po średnicy koła)
+        y_line = np.linspace(-1, 1, 200)
+        x_line = np.zeros_like(y_line)
+        self.ax_top.plot(
+            x_line, y_line,
+            linestyle="--",
+            color="#555555",
+            linewidth=0.8
+        )
+
         # =========================================================
         # SIDE VIEW (elewacja)
         # =========================================================
@@ -628,6 +752,12 @@ class ConvolutionPage(ctk.CTkFrame):
         self.ax_side.set_xlim(-1.2, 1.2)
         self.ax_side.set_ylim(-1.2, 1.2)
         self.ax_side.axis("off")
+
+        # --- OPISY KIERUNKÓW (SIDE VIEW) ---
+        self.ax_side.text(1.32, 0, "PRZÓD", color="white", ha="center", va="center", fontsize=10)
+        self.ax_side.text(-1.32, 0, "TYŁ", color="white", ha="center", va="center", fontsize=10)
+        self.ax_side.text(0, 1.10, "GÓRA", color="white", ha="center", va="center", fontsize=10)
+        self.ax_side.text(0, -1.15, "DÓŁ", color="white", ha="center", va="center", fontsize=10)
 
         # koło (przekrój boczny głowy)
         self.ax_side.plot(np.cos(theta), np.sin(theta), color="#aaaaaa", linewidth=1.0)
@@ -642,8 +772,16 @@ class ConvolutionPage(ctk.CTkFrame):
             length_includes_head=True
         )
 
-        # poziom uszu (0°)
-        self.ax_side.axhline(y=0, color="#555555", linestyle="--", linewidth=0.8)
+        # --- POZIOMA LINIA PRZERYWANA (SIDE VIEW), obcięta do koła ---
+        # y = 0, x od -1 do 1
+        x_line = np.linspace(-1, 1, 200)
+        y_line = np.zeros_like(x_line)
+        self.ax_side.plot(
+            x_line, y_line,
+            linestyle="--",
+            color="#555555",
+            linewidth=0.8
+        )
 
         # duży punkt w środku – głowa
         self.ax_side.scatter([0], [0], s=80, color="#dddddd")
@@ -666,19 +804,16 @@ class ConvolutionPage(ctk.CTkFrame):
         if hasattr(self, "hrtf_canvas"):
             self.hrtf_canvas.draw_idle()
 
+
+
+
     # =============================================================
     # OBSŁUGA TABVIEW
     # =============================================================
-    def _on_plot_tab_change(self):
-        """
-        Blokuje przełączanie na tab HRTF, gdy przełącznik HRTF jest wyłączony.
-        Wywoływana automatycznie przez CTkTabview bez argumentów.
-        """
-        # aktualnie wybrany tab
+    def _on_plot_tab_change(self, tab_name=None):
         current_tab = self.plot_tabs.get()
 
         if current_tab == self.hrtf_tab_name and not self.hrtf_var.get():
-            # HRTF wyłączone → natychmiast wracamy na tab z IR
             self.plot_tabs.set(self.ir_tab_name)
 
     # =============================================================
