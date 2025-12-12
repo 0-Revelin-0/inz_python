@@ -376,9 +376,10 @@ class ConvolutionPage(ctk.CTkFrame):
             self.audio_var.set(path)
 
     def _choose_output(self):
-        path = fd.askdirectory()
-        if path:
-            self.output_var.set(path)
+        """Wybór KATALOGU, do którego trafią pliki wynikowe."""
+        folder = fd.askdirectory()
+        if folder:
+            self.output_var.set(folder)
 
     # =============================================================
     # ŁADOWANIE DANYCH DO WYKRESÓW
@@ -1761,10 +1762,10 @@ class GeneratorPage(ctk.CTkFrame):
         self.canvas.draw_idle()
 
     def _choose_output(self):
-        """Wybór KATALOGU, do którego trafią pliki wynikowe."""
+        """Wybór folderu zapisu generowanego IR."""
         folder = fd.askdirectory()
         if folder:
-            self.output_var.set(folder)
+            self.ir_output_var.set(folder)
 
 
 class InputMonitor:
