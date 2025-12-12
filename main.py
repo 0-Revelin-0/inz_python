@@ -2978,8 +2978,9 @@ class AboutPage(ctk.CTkFrame):
         tabs.add("Opis programu")
         tabs.add("Funkcjonalności")
         tabs.add("Instrukcja pomiaru")
-        tabs.add("Instrukcja generowania IR")      # NOWY TAB
-        tabs.add("Instrukcja splotu IR z audio")   # NOWY TAB
+        tabs.add("Instrukcja generowania IR")
+        tabs.add("Instrukcja splotu IR z audio")
+        tabs.add("Kalibracja SPL")
         tabs.add("O autorze")
         tabs.add("Informacje techniczne")
 
@@ -2998,134 +2999,135 @@ class AboutPage(ctk.CTkFrame):
                 frame,
                 wrap="word",
                 font=("Arial", 15),
-                height=350  # możesz dostosować wysokość
+                height=350
             )
             textbox.pack(fill="both", expand=True, padx=10, pady=5)
 
-            # Wstaw tekst i zablokuj edytowanie
             textbox.insert("0.0", text)
             textbox.configure(state="disabled")
-
             return textbox
 
         # ======================================================
-        # 1. OPIS PROGRAMU
+        # 1) OPIS PROGRAMU
         # ======================================================
 
         opis = (
-            "Easy IResponse to aplikacja do precyzyjnego pomiaru odpowiedzi impulsowej (IR) "
-            "z użyciem metody Exponential Sine Sweep (ESS) zgodnej z techniką Fariny. "
-            "Program łączy generację sweepa, odtwarzanie, jednoczesne nagrywanie sygnału, "
-            "dekonwolucję oraz analizę częstotliwościową.\n\n"
-            "Aplikacja obsługuje pomiary MONO oraz STEREO, w tym dwa niezależne wejścia "
-            "wejściowe (Input L oraz Input R), co umożliwia pomiary dwukanałowe, pomiary HRTF "
-            "oraz rejestrację odpowiedzi dwóch mikrofonów jednocześnie. "
-            "Kanały są normalizowane wspólnie, zapewniając zachowanie relacji poziomów.\n\n"
-            "Program obsługuje uśrednianie wielu sweepów (concatenated sweep averaging), "
-            "które znacząco poprawia stosunek sygnał/szum (SNR). Zaimplementowano pełny model "
-            "uśredniania synchronicznego: sklejanie sweepów w jednym buforze, dzielenie nagrania "
-            "na okna oraz dekonwolucję okna uśrednionego.\n\n"
-            "Interfejs aplikacji pozwala konfigurować wszystkie parametry pomiarowe, przeglądać IR, "
-            "charakterystyki amplitudowe oraz eksportować wyniki do plików WAV."
+            "Easy IResponse to aplikacja desktopowa do pracy z odpowiedzią impulsową (IR) w akustyce i audio. "
+            "Program łączy trzy główne obszary pracy:\n\n"
+            "1) Pomiar IR metodą ESS (Exponential Sine Sweep) z dekonwolucją w domenie częstotliwości,\n"
+            "2) Syntezę IR na podstawie geometrii pomieszczenia oraz pochłaniania w pasmach oktawowych,\n"
+            "3) Splot (konwolucję) dowolnego pliku audio z wybraną IR (mono lub stereo).\n\n"
+            "Aplikacja obsługuje pomiary MONO i STEREO (Input L / Input R) oraz tryb uśredniania wielu sweepów "
+            "poprawiający stosunek sygnał/szum (SNR). Wyniki można zapisać do plików WAV oraz analizować "
+            "na wykresach w czasie i w paśmie."
         )
-
         add_section(tabs.tab("Opis programu"), "Opis programu", opis)
 
         # ======================================================
-        # 2. FUNKCJONALNOŚCI
+        # 2) FUNKCJONALNOŚCI
         # ======================================================
 
         funkcje = (
-            "• Pomiar odpowiedzi impulsowej metodą ESS (Exponential Sine Sweep)\n"
-            "• Tryby pomiarowe: MONO oraz STEREO\n"
-            "• Obsługa dwóch niezależnych wejść audio (Input L / Input R)\n"
-            "• Możliwość użycia jednego urządzenia 2-kanałowego lub dwóch osobnych urządzeń\n"
-            "• Jednoczesne nagrywanie dwóch kanałów w trybie stereo\n"
-            "• Wspólna normalizacja IR kanałów L i R — wymagana przy pomiarach HRTF\n"
-            "• Uśrednianie wielu sweepów (concatenated sweep averaging) poprawiające SNR\n"
-            "• Automatyczne sprawdzanie zgodności długości IR z długością sweepa\n"
-            "• Pełna dekonwolucja widmowa (FFT · inverse-sweep)\n"
-            "• Generacja sweepa z fade-out, aby uniknąć klików na łączeniach\n"
-            "• Analiza IR w dziedzinie czasu i częstotliwości\n"
-            "• Dynamiczny wybór kanału do wyświetlania (L / R)\n"
-            "• Surowe nagrania + IR zapisywane osobno dla obu kanałów\n"
-            "• Kalibracja SPL z monitoringiem poziomu wejściowego w czasie rzeczywistym\n"
-            "• Smoothing charakterystyki: Raw, 1/24, 1/12, 1/6, 1/3 okt.\n"
-            "• Zmienne okno wizualizacji IR za pikiem (ms)\n"
-            "• Integracja z real-time audio (sounddevice)\n"
+            "• Pomiar IR metodą ESS (Exponential Sine Sweep)\n"
+            "• Tryby pomiarowe: SINGLE (pojedynczy sweep) oraz AVERAGE (uśrednianie wielu sweepów – metoda Fariny)\n"
+            "• MONO i STEREO: jednoczesny zapis IR dla dwóch kanałów (Input L / Input R)\n"
+            "• Dekonwolucja FFT: recorded × inverse_sweep (z osobnym trybem dekonwolucji całego nagrania przy averaging)\n"
+            "• Wspólna normalizacja kanałów w stereo (zachowanie relacji L/R – ważne np. dla HRTF)\n"
+            "• Charakterystyka amplitudowa z IR + wygładzanie (fractional-octave smoothing)\n"
+            "• Generator IR: wczesne odbicia (model FDN/ray) + późny pogłos (filtrowany szum)\n"
+            "• Pochłanianie w 8 pasmach oktawowych: 125 Hz – 16 kHz (osobno: ściany / sufit / podłoga)\n"
+            "• T60 liczone w pasmach metodą Sabine’a na podstawie geometrii i pochłaniania\n"
+            "• Splot audio: konwolucja FFT + RMS matching (wyrównanie głośności pogłosu do sygnału suchego)\n"
+            "• Wet/Dry z logarytmiczną krzywą + limiter zabezpieczający przed przesterem\n"
+            "• Kalibracja SPL: generator różowego szumu + pomiar RMS/Peak wejścia w czasie rzeczywistym\n"
+            "• Eksport WAV (32-bit float) – nagrania i IR"
         )
         add_section(tabs.tab("Funkcjonalności"), "Funkcjonalności", funkcje)
 
         # ======================================================
-        # 3. INSTRUKCJA POMIARU
+        # 3) INSTRUKCJA POMIARU
         # ======================================================
 
         instrukcja = (
-            "1. W zakładce „Ustawienia pomiaru” wybierz urządzenia audio:\n"
-            "   • Input (Left) — lewy kanał pomiarowy\n"
-            "   • Input (Right) — prawy kanał pomiarowy\n"
-            "   • Output — urządzenie odtwarzające sweep\n"
-            "   Możesz użyć dwóch osobnych urządzeń wejściowych.\n\n"
-
-            "2. Wybierz tryb pracy:\n"
-            "   • MONO — nagrywany jest tylko kanał Left\n"
-            "   • STEREO — nagrywane są oba kanały równolegle\n\n"
-
-            "3. Skonfiguruj parametry:\n"
-            "   • Długość sweepa\n"
-            "   • Zakres częstotliwości start/end\n"
-            "   • Fade (domyślnie 0.05 s — usuwa klik przy końcu sweepa)\n"
-            "   • Długość IR\n"
-            "   • Liczbę uśrednień (averages)\n\n"
-
-            "4. Ważne zasady dotyczące uśredniania:\n"
-            "   • Aplikacja generuje (averages + 1) sklejonych sweepów.\n"
-            "   • Pierwsze okno nagrania jest odrzucane.\n"
-            "   • Kolejne okna są uśredniane synchronicznie.\n"
-            "   • Aby uniknąć aliasingu czasowego, długość IR musi być "
-            "≤ długości sweepa, gdy averages > 1. Program automatycznie to wymusza.\n\n"
-
-            "5. Wykonaj kalibrację SPL (opcjonalnie), aby ustawić poprawny poziom nagrania.\n\n"
-
-            "6. Naciśnij „Start measurement”:\n"
-            "   • Program odtworzy sklejone sweepy\n"
-            "   • Nagranie będzie równoległe (L / R)\n"
-            "   • IR zostaną zdekoniugowane i normalizowane jednym wspólnym współczynnikiem\n\n"
-
-            "7. Zapisane pliki:\n"
-            "   • RECORDED_L_*.wav — surowe nagranie lewego kanału\n"
-            "   • RECORDED_R_*.wav — surowe nagranie prawego kanału\n"
-            "   • IR_L_*.wav — odpowiedź impulsowa kanału L\n"
-            "   • IR_R_*.wav — odpowiedź impulsowa kanału R\n\n"
-
-            "8. Wykresy:\n"
-            "   • IR jest przycinana wizualnie do okna za głównym pikiem\n"
-            "   • Charakterystyka amplitudowa może być wygładzona"
+            "1. Wybierz urządzenia audio: Output (odtwarzanie) i Input (nagranie).\n"
+            "2. Ustaw Sample Rate oraz Buffer Size.\n"
+            "3. Wybierz tryb MONO lub STEREO (Input L / Input R).\n"
+            "4. Ustaw parametry sweepa: start_freq, end_freq oraz sweep_length.\n"
+            "5. Ustaw IR length:\n"
+            "   • w trybie SINGLE – dowolna (zwykle większa niż czas pogłosu),\n"
+            "   • w trybie AVERAGE – IR length jest automatycznie wymuszona na sweep_length.\n"
+            "6. (Opcjonalnie) Włącz uśrednianie: wybierz tryb AVERAGE i ustaw liczbę uśrednień (>=2).\n"
+            "   Program odtworzy kilka sweepów sklejonych próbka-do-próbki, wykona dekonwolucję całości,\n"
+            "   wytnie kolejne bloki IR (pierwszy blok jest odrzucany) i uśredni wynik.\n"
+            "7. Kliknij START, wykonaj pomiar, a następnie zapisz wyniki.\n\n"
+            "Zapisywane pliki (przykładowo):\n"
+            "• RECORDED_L_*.wav / RECORDED_R_*.wav – surowe nagranie wejścia\n"
+            "• IR_L_*.wav / IR_R_*.wav – odpowiedź impulsowa\n\n"
+            "Wykresy: IR w czasie oraz charakterystyka amplitudowa (z opcjonalnym smoothingiem)."
         )
         add_section(tabs.tab("Instrukcja pomiaru"), "Instrukcja pomiaru IR", instrukcja)
 
         # ======================================================
-        # 4. PUSTY TAB – INSTRUKCJA GENEROWANIA IR
+        # 4) INSTRUKCJA GENEROWANIA IR
         # ======================================================
 
-        add_section(
-            tabs.tab("Instrukcja generowania IR"),
-            "Instrukcja generowania IR",
-            "Ta sekcja zostanie uzupełniona."
+        gen_instr = (
+            "Generator tworzy syntetyczną IR z trzech składników: dźwięk bezpośredni (impuls), "
+            "wczesne odbicia oraz późny pogłos.\n\n"
+            "1. W zakładce ustawień generatora podaj wymiary pomieszczenia (W, L, H) w metrach.\n"
+            "2. Ustaw pochłanianie w 8 pasmach oktawowych (125–16k Hz) osobno dla: ścian, sufitu i podłogi.\n"
+            "3. Ustaw parametry modelu wczesnych odbić (FDN):\n"
+            "   • liczba promieni (Rays),\n"
+            "   • liczba odbić na promień (Reflections),\n"
+            "   • rozrzut pierwszego odbicia [%],\n"
+            "   • rozrzut mean free path [%].\n"
+            "4. Na stronie Generator ustaw długość IR oraz proporcję Early/Late (suwak).\n"
+            "5. Kliknij GENERUJ i zapisz wynik do WAV.\n\n"
+            "Jak to działa w skrócie:\n"
+            "• T60 liczone jest metodą Sabine’a w pasmach oktawowych na podstawie geometrii i pochłaniania.\n"
+            "• Późny pogłos: biały szum filtrowany bankiem pasm oktawowych + obwiednia zaniku 10^(-3·t/T60).\n"
+            "• Wczesne odbicia: losowany rozkład czasów (na bazie MFP) i tłumień – suma impulsów w czasie.\n"
+            "• Całość jest normalizowana globalnie do max=1."
         )
+        add_section(tabs.tab("Instrukcja generowania IR"), "Instrukcja generowania IR", gen_instr)
 
         # ======================================================
-        # 5. PUSTY TAB – INSTRUKCJA SPLOTU IR Z AUDIO
+        # 5) INSTRUKCJA SPLOTU IR Z AUDIO
         # ======================================================
 
-        add_section(
-            tabs.tab("Instrukcja splotu IR z audio"),
-            "Instrukcja splotu IR z sygnałem audio",
-            "Ta sekcja zostanie uzupełniona."
+        conv_instr = (
+            "1. Wybierz plik audio (WAV) do przetworzenia.\n"
+            "2. Wybierz tryb:\n"
+            "   • Mono – jedna IR (stosowana do kanału mono lub do obu kanałów stereo),\n"
+            "   • Stereo – osobne IR Left i IR Right.\n"
+            "3. Ustaw Wet/Dry (suwak ma logarytmiczną krzywą odczuwalności).\n"
+            "4. Wybierz ścieżkę zapisu i uruchom splot.\n\n"
+            "W silniku splotu:\n"
+            "• Konwolucja wykonywana jest w domenie częstotliwości (FFT).\n"
+            "• IR jest downmixowana do mono (jeśli w pliku ma 2 kanały), a następnie normalizowana.\n"
+            "• RMS matching dopasowuje głośność kanału „wet” do głośności sygnału „dry”.\n"
+            "• Na końcu działa limiter (jeśli peak > 1.0, sygnał jest skalowany)."
         )
+        add_section(tabs.tab("Instrukcja splotu IR z audio"), "Instrukcja splotu IR z sygnałem audio", conv_instr)
 
         # ======================================================
-        # 6. O AUTORZE
+        # 6) KALIBRACJA SPL
+        # ======================================================
+
+        spl_instr = (
+            "Zakładka kalibracji SPL służy do ustawienia poziomów odsłuchu/nagrania w kontrolowany sposób.\n\n"
+            "1. Wybierz urządzenia audio (Output i Input) oraz sample rate/buffer.\n"
+            "2. Uruchom generator różowego szumu (pink noise) na wyjściu.\n"
+            "3. Monitor wejścia pokazuje RMS i Peak w dBFS w czasie rzeczywistym.\n"
+            "4. Na podstawie wskazań ustaw gain na interfejsie/monitorach tak, aby uzyskać bezpieczny poziom "
+            "i uniknąć przesteru.\n\n"
+            "Uwaga: monitor pokazuje poziom w dBFS (cyfrowy), nie w dBSPL – do pełnej kalibracji SPL potrzebny jest "
+            "zewnętrzny miernik SPL i wyznaczenie odniesienia."
+        )
+        add_section(tabs.tab("Kalibracja SPL"), "Kalibracja (pink noise + monitor wejścia)", spl_instr)
+
+        # ======================================================
+        # 7) O AUTORZE
         # ======================================================
 
         autor = (
@@ -3139,24 +3141,23 @@ class AboutPage(ctk.CTkFrame):
         add_section(tabs.tab("O autorze"), "O autorze", autor)
 
         # ======================================================
-        # 7. INFORMACJE TECHNICZNE
+        # 8) INFORMACJE TECHNICZNE
         # ======================================================
 
         techniczne = (
-            "• Algorytm pomiarowy: Exponential Sine Sweep (ESS) wg Fariny\n"
-            "• Generacja sweepa z fade-out, aby pierwszy i ostatni punkt były równe zero\n"
-            "• Uśrednianie concat sweepów: sklejanie bez przerwy próbki do próbki\n"
-            "• Dzielenie nagrania na okna długości jednego sweepa (pierwsze pomijane)\n"
-            "• Uśrednianie synchroniczne poprawiające SNR\n"
-            "• Wymuszenie IR_length ≤ sweep_length, gdy averages > 1 (ochrona przed aliasingiem)\n"
-            "• Dekonwolucja: FFT(recorded) × conj(FFT(inverse_sweep))\n"
-            "• Wspólna normalizacja IR kanałów L i R — identyczny współczynnik\n"
-            "• Format nagrań i IR: WAV 32-bit float\n"
-            "• Zachowano zgodność długości kanałów stereo oraz pre-align piku IR\n"
-            "• Wykresy: czasowe + częstotliwościowe z smoothingiem\n"
-            "• Biblioteki: numpy, soundfile, sounddevice, matplotlib, customtkinter\n"
+            "• measurement_engine.py: sweep ESS (fade-in/fade-out ~5 ms), inverse filter (Farina), play/rec, "
+            "dekonwolucja (FFT) i smoothing\n"
+            "• synthesis_engine.py: synteza IR (Sabine w pasmach oktawowych 125–16k Hz, MFP, wczesne odbicia + późny pogłos)\n"
+            "• convolution_engine.py: FFT convolution, downmix IR, normalizacja, RMS matching, logarytmiczny wet/dry, limiter\n"
+            "• spl_calibration.py: pink noise + monitor RMS/Peak na wejściu\n\n"
+            "Dane/formaty:\n"
+            "• WAV 32-bit float (nagrania i IR)\n"
+            "• Wspólna normalizacja kanałów stereo (jeden współczynnik)\n"
+            "• Averaging: sklejone sweepy + dekonwolucja całości + wycinanie bloków IR (pierwszy blok odrzucany)\n\n"
+            "Biblioteki: numpy, sounddevice, soundfile, matplotlib, customtkinter."
         )
         add_section(tabs.tab("Informacje techniczne"), "Informacje techniczne", techniczne)
+
 
 
 # --------------------------------------------------
@@ -3219,7 +3220,7 @@ class EasyIResponseApp(ctk.CTk):
 
         # Okno
         self.title("Easy IResponse")
-        self.geometry("1200x800")
+        self.geometry("1300x800")
         self.minsize(900, 550)
         self.resizable(False, False)
 
