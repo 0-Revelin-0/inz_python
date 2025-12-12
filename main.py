@@ -123,11 +123,13 @@ class ConvolutionPage(ctk.CTkFrame):
     """
     GUI do splotu audio:
     - Mono / Stereo (dynamicznie zmienia ilość pól IR)
-    - HRTF on/off (na razie tylko przełącznik, logika później)
+    - HRTF on/off (panel ustawień pokazuje się pod suwakiem Wet/Dry)
     - Wet/Dry
     - Plik audio
     - Plik wynikowy
-    - Prawa strona: 2 wykresy (IR + splecione audio), jak na innych stronach
+    - Prawa strona: TABVIEW
+        * Tab 1: IR + splecione audio
+        * Tab 2: Widoki HRTF (Top / Side)
     """
 
     def __init__(self, parent, controller):
@@ -135,19 +137,37 @@ class ConvolutionPage(ctk.CTkFrame):
         self.controller = controller
 
         # ------- Zmienne GUI -------
+
+        # tryb splotu
         self.mode_var = ctk.StringVar(value="Mono")
+
+        # HRTF ON/OFF
         self.hrtf_var = ctk.BooleanVar(value=False)
 
+        # ścieżki plików
         self.ir1_var = ctk.StringVar()
         self.ir2_var = ctk.StringVar()
         self.audio_var = ctk.StringVar()
         self.output_var = ctk.StringVar()
+
+        # wet/dry
         self.wetdry_var = ctk.DoubleVar(value=100.0)
+
+        # zmienne HRTF – kierunek źródła
+        # azymut: -180..180 (0 = przód)
+        self.hrtf_az_var = ctk.DoubleVar(value=0.0)
+        # elewacja: np. -40..+90
+        self.hrtf_el_var = ctk.DoubleVar(value=0.0)
 
         # aktualnie wybrany kanał do podglądu (L / R)
         self.current_channel = "L"
 
-        # ------- Dane do wykresów -------
+        # nazwy tabów z wykresami
+        self.ir_tab_name = "IR i audio"
+        self.hrtf_tab_name = "HRTF"
+
+        # ------- Dane do wykresów (IR + audio) -------
+
         self.ir_mono = None
         self.ir_left = None
         self.ir_right = None
@@ -159,6 +179,7 @@ class ConvolutionPage(ctk.CTkFrame):
         self.conv_fs = None
 
         # ------- Layout główny -------
+
         self.columnconfigure(0, weight=0)
         self.columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
@@ -167,16 +188,15 @@ class ConvolutionPage(ctk.CTkFrame):
         left = ctk.CTkFrame(self, width=420)
         left.grid(row=0, column=0, padx=(20, 10), pady=20, sticky="nsew")
 
-        for r in range(10):
+        for r in range(12):
             left.grid_rowconfigure(r, weight=0)
-        left.grid_rowconfigure(8, weight=1)   # rozpychacz
+        left.grid_rowconfigure(9, weight=1)  # rozpychacz
 
-        # PRAWY panel (wykresy)
         right = ctk.CTkFrame(self)
         right.grid(row=0, column=1, padx=(10, 20), pady=20, sticky="nsew")
         right.grid_columnconfigure(0, weight=1)
-        right.grid_rowconfigure(0, weight=0)   # panel kanałów
-        right.grid_rowconfigure(1, weight=1)   # wykresy
+        right.grid_rowconfigure(0, weight=0)  # (gdyby kiedyś był tu panel nad tabami)
+        right.grid_rowconfigure(1, weight=1)  # tabview z wykresami wypełnia dół
 
         # ---------------- Tytuł ----------------
         title = ctk.CTkLabel(left, text="🎧  Splot audio", font=("Roboto", 22, "bold"))
@@ -191,22 +211,18 @@ class ConvolutionPage(ctk.CTkFrame):
         )
         self.mode_seg.grid(row=1, column=0, sticky="ew", pady=(5, 15))
 
-        # ---------------- HRTF (na przyszłość) ----------------
-        self.hrtf_switch = ctk.CTkSwitch(left, text="Użyj HRTF", variable=self.hrtf_var)
-        self.hrtf_switch.grid(row=2, column=0, sticky="w", pady=(0, 15))
-
-        # ---------------- IR FIELDS ----------------
+        # ---------------- IR FIELDS (pod trybem) ----------------
         self.ir_frame = ctk.CTkFrame(left)
-        self.ir_frame.grid(row=3, column=0, sticky="ew", pady=(0, 15))
+        self.ir_frame.grid(row=2, column=0, sticky="ew", pady=(0, 15))
         self._update_ir_fields()
 
         # ---------------- Plik audio ----------------
         ctk.CTkLabel(left, text="Plik audio:", font=("Arial", 14, "bold")).grid(
-            row=4, column=0, sticky="w"
+            row=3, column=0, sticky="w"
         )
 
         audio_row = ctk.CTkFrame(left)
-        audio_row.grid(row=5, column=0, sticky="ew", pady=(5, 15))
+        audio_row.grid(row=4, column=0, sticky="ew", pady=(5, 15))
 
         ctk.CTkEntry(audio_row, textvariable=self.audio_var).pack(
             side="left", fill="x", expand=True, padx=(0, 5)
@@ -217,11 +233,11 @@ class ConvolutionPage(ctk.CTkFrame):
 
         # ---------------- Wet/Dry ----------------
         ctk.CTkLabel(left, text="Wet/Dry (%)", font=("Arial", 14, "bold")).grid(
-            row=6, column=0, sticky="w"
+            row=5, column=0, sticky="w"
         )
 
         wd_row = ctk.CTkFrame(left)
-        wd_row.grid(row=7, column=0, sticky="ew", pady=(5, 0))
+        wd_row.grid(row=6, column=0, sticky="ew", pady=(5, 0))
 
         self.wetdry_slider = ctk.CTkSlider(
             wd_row, from_=0, to=100, variable=self.wetdry_var
@@ -230,14 +246,25 @@ class ConvolutionPage(ctk.CTkFrame):
 
         self.wetdry_value = ctk.CTkLabel(wd_row, text="100%")
         self.wetdry_value.pack(side="right")
-
         self.wetdry_var.trace_add("write", self._update_wetdry_label)
+
+        # ---------------- HRTF switch POD Wet/Dry ----------------
+        self.hrtf_switch = ctk.CTkSwitch(
+            left,
+            text="Użyj HRTF",
+            variable=self.hrtf_var,
+            command=self._on_hrtf_toggle
+        )
+        self.hrtf_switch.grid(row=7, column=0, sticky="w", pady=(10, 5))
+
+        # ---------------- Panel HRTF (Top + Side view – ustawienia) ----------------
+        self._create_hrtf_panel(left)
+        self._on_hrtf_toggle()  # ustawia widoczność panelu + tabview
 
         # ---------------- DÓŁ: Plik wynikowy + Start + Status ----------------
         bottom = ctk.CTkFrame(left)
-        bottom.grid(row=9, column=0, sticky="ew", pady=(10, 0))
+        bottom.grid(row=10, column=0, sticky="ew", pady=(10, 0))
 
-        # Plik wynikowy
         ctk.CTkLabel(bottom, text="Plik wynikowy:", font=("Arial", 14, "bold")).pack(
             anchor="w"
         )
@@ -252,7 +279,6 @@ class ConvolutionPage(ctk.CTkFrame):
             out_row, text="Wybierz", width=100, command=self._choose_output
         ).pack(side="right")
 
-        # Start button
         self.start_button = ctk.CTkButton(
             bottom,
             text="▶ Start splotu",
@@ -262,7 +288,6 @@ class ConvolutionPage(ctk.CTkFrame):
         )
         self.start_button.pack(fill="x", pady=(0, 5))
 
-        # Status splotu
         self.status_label = ctk.CTkLabel(
             bottom,
             text="",
@@ -274,27 +299,57 @@ class ConvolutionPage(ctk.CTkFrame):
         self.status_label.pack(fill="x", pady=(2, 0))
 
         # =========================================================
-        # PRAWA STRONA – WYBÓR KANAŁU + WYKRESY
+        # PRAWA STRONA – WYBÓR KANAŁU + TABVIEW Z WYKRESAMI
         # =========================================================
 
-        # Panel wyboru kanału (jak w MeasurementPage)
-        channel_frame = ctk.CTkFrame(right, fg_color="transparent")
-        channel_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 0))
+        # # Panel wyboru kanału (jak w MeasurementPage)
+        # channel_frame = ctk.CTkFrame(right, fg_color="transparent")
+        # channel_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 0))
+        #
+        # ctk.CTkLabel(
+        #     channel_frame,
+        #     text="Kanał do podglądu:"
+        # ).pack(side="left", padx=(0, 10))
+        #
+        # self.channel_selector = ctk.CTkSegmentedButton(
+        #     channel_frame,
+        #     values=["L", "R"],
+        #     command=self._on_channel_change
+        # )
+        # self.channel_selector.pack(side="left")
+        # self.channel_selector.set("L")
+
+        # ---------- TABVIEW na wykresy ----------
+        self.plot_tabs = ctk.CTkTabview(
+            right,
+            width=10,
+            height=10,
+            command=self._on_plot_tab_change
+        )
+        self.plot_tabs.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
+
+        self.tab_ir = self.plot_tabs.add(self.ir_tab_name)
+        self.tab_hrtf = self.plot_tabs.add(self.hrtf_tab_name)
+        self.plot_tabs.set(self.ir_tab_name)
+
+        # Panel wyboru kanału wewnątrz taba IR
+        ir_channel_frame = ctk.CTkFrame(self.tab_ir, fg_color="transparent")
+        ir_channel_frame.grid(row=0, column=0, sticky="w", pady=(10, 5), padx=5)
 
         ctk.CTkLabel(
-            channel_frame,
+            ir_channel_frame,
             text="Kanał do podglądu:"
         ).pack(side="left", padx=(0, 10))
 
         self.channel_selector = ctk.CTkSegmentedButton(
-            channel_frame,
+            ir_channel_frame,
             values=["L", "R"],
             command=self._on_channel_change
         )
         self.channel_selector.pack(side="left")
         self.channel_selector.set("L")
 
-        # Figure z dwoma wykresami (IR + audio)
+        # ---------- Figure z dwoma wykresami (IR + audio) w TABIE IR ----------
         self.fig = Figure(
             figsize=(6, 5),
             dpi=100,
@@ -302,7 +357,6 @@ class ConvolutionPage(ctk.CTkFrame):
             tight_layout=True
         )
 
-        # Górny: IR
         self.ax_ir = self.fig.add_subplot(2, 1, 1)
         self.ax_ir.set_facecolor("#111111")
         self.ax_ir.grid(True, color="#444444", alpha=0.3)
@@ -311,7 +365,6 @@ class ConvolutionPage(ctk.CTkFrame):
         self.ax_ir.set_ylabel("Amplituda", color="white")
         self.ax_ir.tick_params(colors="white")
 
-        # Dolny: splecione audio
         self.ax_audio = self.fig.add_subplot(2, 1, 2)
         self.ax_audio.set_facecolor("#111111")
         self.ax_audio.grid(True, color="#444444", alpha=0.3)
@@ -320,12 +373,313 @@ class ConvolutionPage(ctk.CTkFrame):
         self.ax_audio.set_ylabel("Amplituda", color="white")
         self.ax_audio.tick_params(colors="white")
 
-        # Canvas w prawym panelu
-        self.canvas = FigureCanvasTkAgg(self.fig, master=right)
-        self.canvas_widget = self.canvas.get_tk_widget()
-        self.canvas_widget.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
+        self.canvas = FigureCanvasTkAgg(self.fig, master=self.tab_ir)
+        self.tab_ir.grid_rowconfigure(1, weight=1)
+        self.tab_ir.grid_columnconfigure(0, weight=1)
 
+        self.canvas_widget = self.canvas.get_tk_widget()
+        self.canvas_widget.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
+
+        # ---------- Figure z widokami HRTF w TABIE HRTF ----------
+        self._create_hrtf_view_figure(self.tab_hrtf)
+
+        # Wstępne wyczyszczenie wykresów IR/Audio
         self._clear_plots()
+
+    # =============================================================
+    # PANEL HRTF – suwaki + reset (LEWY PANEL)
+    # =============================================================
+    def _create_hrtf_panel(self, parent):
+        """
+        Tworzy panel z ustawieniami HRTF (Top view + Side view),
+        ale NIE pakuje go jeszcze w grid – tym zajmuje się _on_hrtf_toggle().
+        """
+        self.hrtf_panel_row = 8  # pod przełącznikiem HRTF
+
+        panel = ctk.CTkFrame(parent)
+        self.hrtf_panel = panel
+
+        ctk.CTkLabel(
+            panel,
+            text="HRTF – kierunek źródła",
+            font=("Arial", 14, "bold")
+        ).grid(row=0, column=0, sticky="w", padx=5, pady=(5, 5))
+
+        # --- TOP VIEW (azymut) ---
+        top_frame = ctk.CTkFrame(panel)
+        top_frame.grid(row=1, column=0, sticky="ew", padx=5, pady=(0, 8))
+
+        ctk.CTkLabel(
+            top_frame,
+            text="Widok z góry (Top view) – azymut:",
+        ).grid(row=0, column=0, sticky="w", pady=(5, 2))
+
+        self.hrtf_az_slider = ctk.CTkSlider(
+            top_frame,
+            from_=-180,
+            to=180,
+            number_of_steps=360,
+            command=self._on_az_slider
+        )
+        self.hrtf_az_slider.set(0.0)
+        self.hrtf_az_slider.grid(row=1, column=0, sticky="ew", padx=(0, 5))
+
+        self.hrtf_az_label = ctk.CTkLabel(
+            top_frame,
+            text="Azymut: 0°"
+        )
+        self.hrtf_az_label.grid(row=2, column=0, sticky="w", pady=(2, 5))
+
+        # --- SIDE VIEW (elewacja) ---
+        side_frame = ctk.CTkFrame(panel)
+        side_frame.grid(row=2, column=0, sticky="ew", padx=5, pady=(0, 5))
+
+        ctk.CTkLabel(
+            side_frame,
+            text="Widok z boku (Side view) – elewacja:",
+        ).grid(row=0, column=0, sticky="w", pady=(5, 2))
+
+        self.hrtf_el_slider = ctk.CTkSlider(
+            side_frame,
+            from_=-40,
+            to=90,
+            number_of_steps=130,
+            command=self._on_el_slider
+        )
+        self.hrtf_el_slider.set(0.0)
+        self.hrtf_el_slider.grid(row=1, column=0, sticky="ew", padx=(0, 5))
+
+        self.hrtf_el_label = ctk.CTkLabel(
+            side_frame,
+            text="Elewacja: 0°"
+        )
+        self.hrtf_el_label.grid(row=2, column=0, sticky="w", pady=(2, 5))
+
+        reset_btn = ctk.CTkButton(
+            panel,
+            text="Reset do przodu (0°, 0°)",
+            width=140,
+            command=self._reset_hrtf_angles
+        )
+        reset_btn.grid(row=3, column=0, sticky="w", padx=5, pady=(5, 8))
+
+    def _on_hrtf_toggle(self):
+        """
+        Pokazuje / chowa panel HRTF oraz blokuje / odblokowuje tab HRTF.
+        """
+        if getattr(self, "hrtf_panel", None) is None:
+            return
+
+        if self.hrtf_var.get():
+            # pokaż panel z suwakami
+            self.hrtf_panel.grid(
+                row=self.hrtf_panel_row,
+                column=0,
+                sticky="ew",
+                pady=(0, 10)
+            )
+            # HRTF włączone → można przełączać taby
+            # (logika blokady jest w _on_plot_tab_change)
+            self._update_hrtf_plots()
+        else:
+            # ukryj panel
+            self.hrtf_panel.grid_remove()
+            # wymuś powrót na tab IR i audio
+            if hasattr(self, "plot_tabs"):
+                self.plot_tabs.set(self.ir_tab_name)
+
+    def _on_az_slider(self, value):
+        """
+        Callback od slidera azymutu (Top view) — uproszczona etykieta.
+        """
+        try:
+            val = int(round(float(value)))
+        except Exception:
+            val = 0
+
+        self.hrtf_az_var.set(val)
+        self.hrtf_az_label.configure(text=f"Azymut: {val}°")
+
+        self._update_hrtf_plots()
+
+    def _on_el_slider(self, value):
+        """
+        Callback od slidera elewacji (Side view) — uproszczona etykieta.
+        """
+        try:
+            val = int(round(float(value)))
+        except Exception:
+            val = 0
+
+        self.hrtf_el_var.set(val)
+        self.hrtf_el_label.configure(text=f"Elewacja: {val}°")
+
+        self._update_hrtf_plots()
+
+    def _reset_hrtf_angles(self):
+        """
+        Ustawia azymut i elewację na 0° i aktualizuje UI + wykresy.
+        """
+        self.hrtf_az_slider.set(0.0)
+        self.hrtf_el_slider.set(0.0)
+        self._on_az_slider(0.0)
+        self._on_el_slider(0.0)
+
+    # =============================================================
+    # FIGURA HRTF (PRAWY TAB "HRTF")
+    # =============================================================
+    def _create_hrtf_view_figure(self, parent):
+        """
+        Tworzy figure Matplotlib z dwoma widokami:
+        - górny: Top view (azymut)
+        - dolny: Side view (elewacja)
+        """
+        self.hrtf_fig = Figure(
+            figsize=(6, 5),
+            dpi=100,
+            facecolor="#111111",
+            tight_layout=True
+        )
+
+        self.ax_top = self.hrtf_fig.add_subplot(2, 1, 1)
+        self.ax_side = self.hrtf_fig.add_subplot(2, 1, 2)
+
+        for ax in (self.ax_top, self.ax_side):
+            ax.set_facecolor("#111111")
+            ax.tick_params(colors="white")
+            ax.grid(False)
+
+        self.ax_top.set_title("HRTF – widok z góry (azymut)", color="white")
+        self.ax_side.set_title("HRTF – widok z boku (elewacja)", color="white")
+
+        self.hrtf_canvas = FigureCanvasTkAgg(self.hrtf_fig, master=parent)
+        self.tab_hrtf.grid_rowconfigure(0, weight=1)
+        self.tab_hrtf.grid_columnconfigure(0, weight=1)
+
+        self.hrtf_canvas_widget = self.hrtf_canvas.get_tk_widget()
+        self.hrtf_canvas_widget.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+
+        self._update_hrtf_plots()
+
+    def _update_hrtf_plots(self):
+        """
+        Rysuje minimalistyczne widoki HRTF na podstawie
+        self.hrtf_az_var (deg) i self.hrtf_el_var (deg).
+
+        Na każdym widoku:
+        - duży punkt w środku = głowa
+        - mały punkt na okręgu = kierunek źródła
+        """
+        if not hasattr(self, "ax_top") or not hasattr(self, "ax_side"):
+            return
+
+        # wspólne koło jednostkowe
+        theta = np.linspace(0, 2 * np.pi, 200)
+
+        # =========================================================
+        # TOP VIEW (azymut)
+        # =========================================================
+        self.ax_top.cla()
+        self.ax_top.set_facecolor("#111111")
+        self.ax_top.set_title("HRTF – widok z góry (azymut)", color="white")
+        self.ax_top.set_aspect("equal", "box")
+        self.ax_top.set_xlim(-1.2, 1.2)
+        self.ax_top.set_ylim(-1.2, 1.2)
+        self.ax_top.axis("off")
+
+        # koło (obrys głowy / sfery)
+        self.ax_top.plot(np.cos(theta), np.sin(theta), color="#aaaaaa", linewidth=1.0)
+
+        # "nos" w kierunku przodu (0° = +Y)
+        self.ax_top.arrow(
+            0, 0,
+            0, 0.7,
+            head_width=0.07,
+            head_length=0.12,
+            color="#aaaaaa",
+            length_includes_head=True
+        )
+
+        # duży punkt w środku – głowa
+        self.ax_top.scatter([0], [0], s=80, color="#dddddd")
+
+        # punkt źródła na okręgu
+        az_deg = float(self.hrtf_az_var.get())
+        az_rad = np.deg2rad(az_deg)
+
+        # 0° = przód (oś +Y), 90° = prawo (oś +X), -90° = lewo, 180° = tył
+        x_src = np.sin(az_rad)
+        y_src = np.cos(az_rad)
+
+        self.ax_top.scatter(
+            [x_src],
+            [y_src],
+            s=50,
+            color="#4fc3f7"
+        )
+
+        # =========================================================
+        # SIDE VIEW (elewacja)
+        # =========================================================
+        self.ax_side.cla()
+        self.ax_side.set_facecolor("#111111")
+        self.ax_side.set_title("HRTF – widok z boku (elewacja)", color="white")
+        self.ax_side.set_aspect("equal", "box")
+        self.ax_side.set_xlim(-1.2, 1.2)
+        self.ax_side.set_ylim(-1.2, 1.2)
+        self.ax_side.axis("off")
+
+        # koło (przekrój boczny głowy)
+        self.ax_side.plot(np.cos(theta), np.sin(theta), color="#aaaaaa", linewidth=1.0)
+
+        # "nos" w prawo (0° elewacji)
+        self.ax_side.arrow(
+            0, 0,
+            0.7, 0,
+            head_width=0.07,
+            head_length=0.12,
+            color="#aaaaaa",
+            length_includes_head=True
+        )
+
+        # poziom uszu (0°)
+        self.ax_side.axhline(y=0, color="#555555", linestyle="--", linewidth=0.8)
+
+        # duży punkt w środku – głowa
+        self.ax_side.scatter([0], [0], s=80, color="#dddddd")
+
+        # punkt źródła na okręgu (elewacja)
+        el_deg = float(self.hrtf_el_var.get())
+        el_rad = np.deg2rad(el_deg)
+
+        # 0° = na wprost (prawo), +90° = nad głową, ujemne = w dół
+        x_src2 = np.cos(el_rad)
+        y_src2 = np.sin(el_rad)
+
+        self.ax_side.scatter(
+            [x_src2],
+            [y_src2],
+            s=50,
+            color="#4fc3f7"
+        )
+
+        if hasattr(self, "hrtf_canvas"):
+            self.hrtf_canvas.draw_idle()
+
+    # =============================================================
+    # OBSŁUGA TABVIEW
+    # =============================================================
+    def _on_plot_tab_change(self):
+        """
+        Blokuje przełączanie na tab HRTF, gdy przełącznik HRTF jest wyłączony.
+        Wywoływana automatycznie przez CTkTabview bez argumentów.
+        """
+        # aktualnie wybrany tab
+        current_tab = self.plot_tabs.get()
+
+        if current_tab == self.hrtf_tab_name and not self.hrtf_var.get():
+            # HRTF wyłączone → natychmiast wracamy na tab z IR
+            self.plot_tabs.set(self.ir_tab_name)
 
     # =============================================================
     # POLA IR – dynamicznie pokazujemy 1 lub 2 okienka
@@ -344,7 +698,6 @@ class ConvolutionPage(ctk.CTkFrame):
 
         self._load_ir_data()
 
-        # wywołujemy update_plots TYLKO jeśli wykresy już istnieją
         if hasattr(self, "ax_ir"):
             self.update_plots()
 
@@ -401,13 +754,11 @@ class ConvolutionPage(ctk.CTkFrame):
                     if data.ndim == 1:
                         self.ir_mono = data.astype(np.float32)
                     else:
-                        # jeśli ktoś podał stereo IR – bierzemy kanał L
                         self.ir_mono = data[:, 0].astype(np.float32)
             else:
                 path_l = self.ir1_var.get().strip()
                 path_r = self.ir2_var.get().strip()
 
-                # Lewa
                 if path_l and os.path.isfile(path_l):
                     data_l, fs_l = sf.read(path_l, always_2d=False)
                     self.ir_fs = fs_l
@@ -416,10 +767,8 @@ class ConvolutionPage(ctk.CTkFrame):
                     else:
                         self.ir_left = data_l[:, 0].astype(np.float32)
 
-                # Prawa
                 if path_r and os.path.isfile(path_r):
                     data_r, fs_r = sf.read(path_r, always_2d=False)
-                    # jeśli oba pliki mają inne fs, do wykresu to nie ma znaczenia
                     if self.ir_fs is None:
                         self.ir_fs = fs_r
                     if data_r.ndim == 1:
@@ -466,7 +815,7 @@ class ConvolutionPage(ctk.CTkFrame):
         self.update_plots()
 
     # =============================================================
-    # WYKRESY
+    # WYKRESY IR + AUDIO
     # =============================================================
     def _clear_plots(self):
         # Górny – IR
@@ -534,7 +883,6 @@ class ConvolutionPage(ctk.CTkFrame):
             audio = self.conv_audio_mono
             channel_label_audio = "Mono"
         else:
-            # stereo wynik
             if self.current_channel == "R" and self.conv_audio_right is not None:
                 audio = self.conv_audio_right
                 channel_label_audio = "Right"
@@ -571,10 +919,9 @@ class ConvolutionPage(ctk.CTkFrame):
         audio_path = self.audio_var.get().strip()
         ir1_path = self.ir1_var.get().strip()
         ir2_path = self.ir2_var.get().strip()
-        output_target = self.output_var.get().strip()  # to, co wpisał/wybrał użytkownik
+        output_target = self.output_var.get().strip()
         wet = float(self.wetdry_var.get())
 
-        # --- Walidacja podstawowa ---
         if not audio_path:
             show_error("Wybierz plik audio.")
             return
@@ -583,41 +930,27 @@ class ConvolutionPage(ctk.CTkFrame):
             if not ir1_path:
                 show_error("W trybie Mono wybierz plik IR.")
                 return
-        else:  # Stereo
+        else:
             if not ir1_path or not ir2_path:
                 show_error("W trybie Stereo wybierz IR Left oraz IR Right.")
                 return
 
-        # --- Wet/Dry w [0..1] ---
         wet_frac = max(0.0, min(1.0, wet / 100.0))
 
-        # =========================================================
-        # USTALANIE KATALOGU I NAZWY PLIKU
-        # =========================================================
-        # 1) Katalog wyjściowy:
-        #    - jeśli user wybrał katalog w GUI → bierzemy go
-        #    - jeśli nic nie podał → katalog pliku audio
-        #    - jeśli podał pełną ścieżkę z nazwą pliku → użyjemy jej DOSŁOWNIE
         manual_filename = None
 
         if output_target and os.path.isdir(output_target):
-            # użytkownik wskazał katalog
             out_dir = output_target
         elif output_target:
-            # użytkownik wpisał swoją nazwę pliku (np. C:\...\moj_plik.wav)
             out_dir = os.path.dirname(output_target) or os.path.dirname(audio_path)
             manual_filename = os.path.basename(output_target)
         else:
-            # nic nie podał → bierzemy katalog pliku audio
             out_dir = os.path.dirname(audio_path)
             manual_filename = None
 
-        # 2) Nazwa pliku:
         if manual_filename:
-            # użytkownik wymusił własną nazwę
             out_path = os.path.join(out_dir, manual_filename)
         else:
-            # auto-nazwa: nazwa_audio + tryb + data/godzina + wet
             base = os.path.splitext(os.path.basename(audio_path))[0]
             ts = time.strftime("%Y-%m-%d_%H-%M-%S")
             wet_int = int(round(wet))
@@ -625,20 +958,17 @@ class ConvolutionPage(ctk.CTkFrame):
             filename = f"{base}_conv_{mode_suffix}_{ts}_wet{wet_int}.wav"
             out_path = os.path.join(out_dir, filename)
 
-        # 3) Co pokazać w polu "Plik wynikowy":
-        #    - jeśli user wybrał katalog / nic nie podał → pokazujemy katalog
-        #    - jeśli podał swoją nazwę pliku → zostawiamy jak jest
         if output_target and os.path.isdir(output_target):
             self.output_var.set(out_dir)
         elif not output_target:
             self.output_var.set(out_dir)
 
-        # --- UI – blokada przycisku i status ---
         self.start_button.configure(state="disabled")
         self.status_label.configure(text="Trwa splot audio...")
 
         def worker():
             try:
+                # TODO: w następnym kroku tutaj podłączymy faktyczne użycie HRTF
                 if mode == "Mono":
                     out_file = convolve_audio_files(
                         audio_path=audio_path,
@@ -657,11 +987,9 @@ class ConvolutionPage(ctk.CTkFrame):
                         output_path=out_path,
                     )
 
-                # Po skończeniu wczytujemy wynik do podglądu
                 if out_file:
                     self._load_convolved_audio(out_file)
 
-                # Aktualizacja statusu i wykresów w wątku GUI
                 self.after(
                     0,
                     lambda: (
@@ -682,17 +1010,10 @@ class ConvolutionPage(ctk.CTkFrame):
                         self.status_label.configure(text="Błąd podczas splotu."),
                     ),
                 )
-            except Exception as e:
-                self.after(
-                    0,
-                    lambda: (
-                        show_error(f"Nieoczekiwany błąd podczas splotu:\n\n{e}"),
-                        self.start_button.configure(state="normal"),
-                        self.status_label.configure(text="Błąd podczas splotu."),
-                    ),
-                )
 
         threading.Thread(target=worker, daemon=True).start()
+
+
 
 
 class MeasurementPage(ctk.CTkFrame):
