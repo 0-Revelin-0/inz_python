@@ -1074,6 +1074,7 @@ class ConvolutionPage(ctk.CTkFrame):
             self.ax_audio.set_title(f"Convolved audio ({channel_label_audio})", color="white")
             self.ax_audio.plot(t_a_plot, audio_plot, linewidth=0.9, color="#009688")
 
+
         self.canvas.draw_idle()
 
     # =============================================================
@@ -1623,8 +1624,99 @@ class MeasurementPage(ctk.CTkFrame):
         self.ir_length.insert(0, str(new_len))
         self.ir_length.configure(state="disabled")
 
+    def _auto_adjust_mag_ylim_after_measurement(self):
+        """
+        Po świeżym pomiarze:
+        ymax = (najwyższy peak w zakresie) + 5 dB
+        ymin = (najniższa próbka w zakresie) - 5 dB
+        Zakres częstotliwości bierzemy z pól start/end (tak jak do rysowania).
+        """
+        try:
+            import numpy as np
+            settings_page = self.controller.pages["settings"]
+        except Exception:
+            return
+
+        freqs = self.last_freqs
+        if freqs is None:
+            return
+
+        # zbierz magnitude (mono albo oba kanały stereo)
+        mags = []
+        try:
+            if self.last_is_stereo:
+                if self.last_mag_L is not None:
+                    mags.append(self.last_mag_L)
+                if self.last_mag_R is not None:
+                    mags.append(self.last_mag_R)
+            else:
+                if self.last_mag is not None:
+                    mags.append(self.last_mag)
+        except Exception:
+            return
+
+        if not mags:
+            return
+
+        # smoothing taki sam jak do rysowania (żeby auto zakres "pasował" do widoku)
+        try:
+            smoothing = self.controller.get_smoothing_fraction()
+            if smoothing is not None:
+                from measurement_engine import smooth_mag_response
+                mags_sm = []
+                for m in mags:
+                    mags_sm.append(smooth_mag_response(freqs, m, fraction=smoothing))
+                mags = mags_sm
+        except Exception:
+            pass
+
+        # zakres częstotliwości taki jak na wykresie
+        try:
+            start_f = float(self.start_freq.get())
+            end_f = float(self.end_freq.get())
+            if start_f <= 0 or end_f <= 0 or start_f >= end_f:
+                raise ValueError()
+            mask = (freqs >= start_f) & (freqs <= end_f)
+        except Exception:
+            mask = np.ones_like(freqs, dtype=bool)
+
+        # scal kanały: bierzemy max z peaków i min z minimów (żeby ogarnąć całość)
+        try:
+            max_peak = -1e9
+            min_val = 1e9
+            for m in mags:
+                v = np.asarray(m)[mask]
+                if v.size == 0:
+                    continue
+                max_peak = max(max_peak, float(np.nanmax(v)))
+                min_val = min(min_val, float(np.nanmin(v)))
+
+            if max_peak <= -1e8 or min_val >= 1e8:
+                return
+        except Exception:
+            return
+
+        ymin = min_val - 5.0
+        ymax = max_peak + 5.0
+
+        # clamp żeby nie odjechało
+        ymin = max(ymin, -200.0)
+        ymax = min(ymax, 50.0)
+
+        if ymin >= ymax:
+            return
+
+        try:
+            settings_page.set_mag_y_limits_programmatically(ymin, ymax, redraw=False)
+        except Exception:
+            pass
+
     def update_plots(self):
         """Aktualizuje wykresy bazując na ostatnim pomiarze (mono lub stereo)."""
+
+        settings = self.controller.pages.get("settings")
+        if settings and getattr(settings, "_mag_user_typing", False):
+            return
 
         # Brak danych – nic nie rysujemy
         if (not self.last_is_stereo and self.last_ir is None) and self.last_ir_L is None:
@@ -1721,6 +1813,14 @@ class MeasurementPage(ctk.CTkFrame):
             start_f = float(self.start_freq.get())
             end_f = float(self.end_freq.get())
             self.ax_mag.set_xlim(start_f * 0.9, end_f * 1.1)
+        except Exception:
+            pass
+
+        # --- dynamiczny zakres osi Y z SettingsPage ---
+        try:
+            ylims = self.controller.get_mag_y_limits()
+            if ylims is not None:
+                self.ax_mag.set_ylim(ylims[0], ylims[1])
         except Exception:
             pass
 
@@ -2002,7 +2102,13 @@ class MeasurementPage(ctk.CTkFrame):
 
             # Finalizacja – przerysowanie wykresów i komunikat
             self.after(0, lambda: self._update_progress(1.0))
+
+            # 1) najpierw auto-ustaw Y dla Magnitude
+            self.after(0, self._auto_adjust_mag_ylim_after_measurement)
+
+            # 2) potem dopiero rysuj wykresy już z nowymi limitami
             self.after(0, self.update_plots)
+
             self.after(
                 0,
                 lambda: self.status_label.configure(
@@ -2508,6 +2614,14 @@ class SettingsPage(ctk.CTkFrame):
 
         super().__init__(parent)
 
+        # ===== Magnitude plot Y-axis range =====
+        self.mag_ymin_var = ctk.StringVar(value="-60")
+        self.mag_ymax_var = ctk.StringVar(value="10")
+
+        self._mag_ylim_after_id = None
+
+        self._mag_user_typing = False
+
         # ==============================
         # DOMYŚLNE MATERIAŁY – POCHŁANIANIE
         # ==============================
@@ -2599,6 +2713,33 @@ class SettingsPage(ctk.CTkFrame):
 
         # Add stretch to column 1
         frame.grid_columnconfigure(1, weight=1)
+
+        # ===============================
+        # Magnitude Response – zakres osi Y (dB)
+        # ===============================
+        mag_ylim_frame = ctk.CTkFrame(measure_tab)
+        mag_ylim_frame.grid(row=4, column=0, columnspan=4, sticky="ew", padx=10, pady=(10, 5))
+
+
+        ctk.CTkLabel(mag_ylim_frame, text="Magnitude: zakres osi Y [dB]").grid(
+            row=0, column=0, columnspan=4, sticky="w", pady=(2, 6)
+        )
+
+        ctk.CTkLabel(mag_ylim_frame, text="Min:").grid(row=1, column=0, sticky="w")
+        self.mag_ymin_entry = ctk.CTkEntry(mag_ylim_frame, width=90, textvariable=self.mag_ymin_var)
+        self.mag_ymin_entry.grid(row=1, column=1, padx=(5, 15), sticky="w")
+
+        ctk.CTkLabel(mag_ylim_frame, text="Max:").grid(row=1, column=2, sticky="w")
+        self.mag_ymax_entry = ctk.CTkEntry(mag_ylim_frame, width=90, textvariable=self.mag_ymax_var)
+        self.mag_ymax_entry.grid(row=1, column=3, padx=(5, 5), sticky="w")
+
+        mag_ylim_frame.grid_columnconfigure(4, weight=1)
+
+        # Dynamiczne odświeżanie wykresu
+        self.mag_ymin_entry.bind("<KeyRelease>", self._on_mag_ylim_change)
+        self.mag_ymax_entry.bind("<KeyRelease>", self._on_mag_ylim_change)
+        self.mag_ymin_entry.bind("<FocusOut>", self._on_mag_ylim_change)
+        self.mag_ymax_entry.bind("<FocusOut>", self._on_mag_ylim_change)
 
         # IR window after peak (ms)
         ctk.CTkLabel(frame, text="IR window after peak [ms]:").grid(
@@ -3209,6 +3350,86 @@ class SettingsPage(ctk.CTkFrame):
         # start debounce (300 ms)
         self._ir_window_after_id = self.after(300, self._apply_ir_window_change)
 
+    def _on_mag_ylim_change(self, event=None):
+        self._mag_user_typing = True
+
+        if self._mag_ylim_after_id is not None:
+            try:
+                self.after_cancel(self._mag_ylim_after_id)
+            except Exception:
+                pass
+
+        self._mag_ylim_after_id = self.after(1100, self._apply_mag_ylim_change)
+
+    def _apply_mag_ylim_change(self):
+        self._mag_ylim_after_id = None
+        self._mag_user_typing = False
+
+        try:
+            measurement_page = self.controller.pages["measurement"]
+            measurement_page.update_plots()
+        except Exception:
+            pass
+
+    def get_mag_y_limits(self):
+        """Zwraca (ymin, ymax) albo None, gdy niepoprawne / w trakcie wpisywania."""
+        try:
+            smin = (self.mag_ymin_var.get() or "").strip().replace(",", ".")
+            smax = (self.mag_ymax_var.get() or "").strip().replace(",", ".")
+
+            # pozwól na "pusty" stan w trakcie edycji
+            if smin in ("", "-", ".", "-.") or smax in ("", "-", ".", "-."):
+                return None
+
+            ymin = float(smin)
+            ymax = float(smax)
+
+            if ymin >= ymax:
+                return None
+
+            return ymin, ymax
+        except Exception:
+            return None
+
+    def set_mag_y_limits_programmatically(self, ymin: float, ymax: float, redraw: bool = True):
+        """
+        Ustawia pola Min/Max dla osi Y Magnitude bez robienia tego jako "ręczne wpisywanie".
+        Używane po pomiarze (auto-dopasowanie).
+        """
+        try:
+            ymin = float(ymin)
+            ymax = float(ymax)
+        except Exception:
+            return
+
+        if ymin >= ymax:
+            return
+
+        # zatrzymaj ewentualny debounce wpisywania (żeby nie nadpisał wartości)
+        try:
+            if getattr(self, "_mag_ylim_after_id", None) is not None:
+                self.after_cancel(self._mag_ylim_after_id)
+                self._mag_ylim_after_id = None
+        except Exception:
+            pass
+
+        # na chwilę wyłącz "user typing", żeby MeasurementPage nie blokował update_plots()
+        self._mag_user_typing = False
+
+        # wpisz do pól (StringVar)
+        try:
+            self.mag_ymin_var.set(f"{ymin:.1f}")
+            self.mag_ymax_var.set(f"{ymax:.1f}")
+        except Exception:
+            return
+
+        if redraw:
+            try:
+                measurement_page = self.controller.pages["measurement"]
+                measurement_page.update_plots()
+            except Exception:
+                pass
+
     def _apply_ir_window_change(self):
         try:
             val = int(self.ir_window_entry.get())
@@ -3471,6 +3692,10 @@ class EasyIResponseApp(ctk.CTk):
     def get_smoothing_fraction(self):
         settings_page = self.pages["settings"]
         return settings_page.get_smoothing_fraction()
+
+    def get_mag_y_limits(self):
+        settings_page = self.pages["settings"]
+        return settings_page.get_mag_y_limits()
 
     def get_ir_window_ms(self):
         settings_page = self.pages["settings"]
