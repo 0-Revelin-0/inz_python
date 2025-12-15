@@ -10,6 +10,8 @@ from typing import Optional, Tuple
 import numpy as np
 import soundfile as sf
 
+from hrtf_engine import apply_hrtf_to_audio
+
 
 # ============================== HELPERS ===============================
 
@@ -126,8 +128,6 @@ def convolve_audio_files(
 
         if not hrtf_db_path:
             raise ValueError("Nie wybrano pliku bazy HRTF (.mat) w Settings.")
-
-        from hrtf_engine import apply_hrtf_to_audio
 
         audio = apply_hrtf_to_audio(
             audio=audio,

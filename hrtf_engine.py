@@ -139,6 +139,11 @@ def apply_hrtf_to_audio(
     else:
         x_mono = x[:, 0]
 
+    # Korekta konwencji osi:
+    # GUI: +az = prawo
+    # Baza HRTF: +az = lewo (CCW)
+    az_deg = -az_deg
+
     idx = find_nearest_hrir_index(mat_data, az_deg=az_deg, el_deg=el_deg)
 
     hM = mat_data["hM"]  # (hrir_len, n_pos, 2)
