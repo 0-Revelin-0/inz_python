@@ -2329,6 +2329,20 @@ class SettingsPage(ctk.CTkFrame):
         self._ir_window_after_id = None
 
         super().__init__(parent)
+
+        # ==============================
+        # DOMYŚLNE MATERIAŁY – POCHŁANIANIE
+        # ==============================
+        self.material_presets = {
+            "Beton / tynk": [0.02, 0.02, 0.03, 0.04, 0.05, 0.05, 0.05, 0.05],
+            "Cegła": [0.03, 0.03, 0.04, 0.05, 0.06, 0.07, 0.07, 0.07],
+            "Drewno": [0.10, 0.11, 0.10, 0.09, 0.08, 0.07, 0.06, 0.05],
+            "Płyta GK": [0.29, 0.10, 0.05, 0.04, 0.07, 0.09, 0.10, 0.10],
+            "Zasłony ciężkie": [0.15, 0.35, 0.55, 0.72, 0.70, 0.65, 0.60, 0.55],
+            "Dywan gruby": [0.08, 0.24, 0.57, 0.69, 0.71, 0.73, 0.73, 0.72],
+            "Panele akustyczne": [0.30, 0.60, 0.85, 0.95, 0.95, 0.90, 0.85, 0.80],
+        }
+
         self.controller = controller
 
         self.audio_devices = []
@@ -2550,14 +2564,30 @@ class SettingsPage(ctk.CTkFrame):
         surfaces = ["Ściany", "Sufit", "Podłoga"]
 
         # Nagłówki kolumn
-        ctk.CTkLabel(abs_frame, text="").grid(row=0, column=0, padx=5)
+        ctk.CTkLabel(abs_frame, text="Materiał").grid(row=0, column=0, padx=10)
+
         for i, f in enumerate(freqs):
             ctk.CTkLabel(abs_frame, text=f"{f} Hz").grid(row=0, column=i + 1, padx=10)
 
         self.abs_entries = {}
 
+        self.material_combos = {}
+
         for r, surf in enumerate(surfaces):
-            ctk.CTkLabel(abs_frame, text=surf).grid(row=r + 1, column=0, padx=10, pady=5, sticky="w")
+
+            # --- ComboBox materiału ---
+            combo = ctk.CTkComboBox(
+                abs_frame,
+                values=list(self.material_presets.keys()),
+                width=160,
+                command=lambda mat, s=surf: self._apply_material_preset(s, mat)
+            )
+            combo.set("Beton / tynk")
+            combo.grid(row=r + 1, column=0, padx=10, pady=5)
+
+            self.material_combos[surf] = combo
+
+            # --- Pola pochłaniania ---
             for c, f in enumerate(freqs):
                 e = ctk.CTkEntry(abs_frame, width=60)
                 e.insert(0, "0.20")
@@ -2667,7 +2697,22 @@ class SettingsPage(ctk.CTkFrame):
     # --- DEVICE HANDLING (jak wcześniej) ---
     # =====================================================================
 
+    def _apply_material_preset(self, surface: str, material: str):
+        """
+        Wpisuje domyślne współczynniki pochłaniania
+        dla wybranej powierzchni i materiału.
+        """
+        if material not in self.material_presets:
+            return
 
+        values = self.material_presets[material]
+        freqs = ["125", "250", "500", "1k", "2k", "4k", "8k", "16k"]
+
+        for f, val in zip(freqs, values):
+            entry = self.abs_entries.get((surface, f))
+            if entry is not None:
+                entry.delete(0, "end")
+                entry.insert(0, f"{val:.2f}")
 
     def get_generator_config(self):
         """
