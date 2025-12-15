@@ -178,6 +178,10 @@ class ConvolutionPage(ctk.CTkFrame):
         self.conv_audio_right = None
         self.conv_fs = None
 
+        # ------- PREVIEW (play/stop) -------
+        self._preview_is_playing = False
+        self._preview_temp_path = None
+
         # ------- Layout główny -------
 
         self.columnconfigure(0, weight=0)
@@ -264,6 +268,13 @@ class ConvolutionPage(ctk.CTkFrame):
         # ---------------- DÓŁ: Plik wynikowy + Start + Status ----------------
         bottom = ctk.CTkFrame(left)
         bottom.grid(row=10, column=0, sticky="ew", pady=(10, 0))
+
+        self.preview_button = ctk.CTkButton(
+            bottom,
+            text="🔊 Preview",
+            command=self._toggle_preview,
+        )
+        self.preview_button.pack(fill="x", pady=(0, 8))
 
         ctk.CTkLabel(bottom, text="Plik wynikowy:", font=("Arial", 14, "bold")).pack(
             anchor="w"
@@ -1186,7 +1197,174 @@ class ConvolutionPage(ctk.CTkFrame):
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def _stop_preview(self):
+        """Zatrzymuje odtwarzanie preview i sprząta stan."""
+        try:
+            sd.stop()
+        except Exception:
+            pass
 
+        self._preview_is_playing = False
+
+        # reset UI
+        if hasattr(self, "preview_button"):
+            self.preview_button.configure(text="🔊 Preview", state="normal")
+        if hasattr(self, "status_label"):
+            self.status_label.configure(text="Preview zatrzymane.")
+
+        # usuń temp plik (jeśli istnieje)
+        if self._preview_temp_path and os.path.isfile(self._preview_temp_path):
+            try:
+                os.remove(self._preview_temp_path)
+            except Exception:
+                pass
+        self._preview_temp_path = None
+
+    def _toggle_preview(self):
+        """
+        Klik:
+        - jeśli gra → STOP
+        - jeśli nie gra → licz splot (jak Start), ale do temp WAV i odtwórz.
+        """
+        # jeśli już gra, to stop
+        if self._preview_is_playing:
+            self._stop_preview()
+            return
+
+        # inaczej start preview (convolution -> play)
+        self._start_preview_convolution()
+
+    def _start_preview_convolution(self):
+        """Robi splot w wątku, zapisuje do temp WAV, ładuje do podglądu i odtwarza."""
+        import threading
+        import tempfile
+        import time
+
+        mode = self.mode_var.get()
+        audio_path = self.audio_var.get().strip()
+        ir1_path = self.ir1_var.get().strip()
+        ir2_path = self.ir2_var.get().strip()
+        wet = float(self.wetdry_var.get())
+
+        if not audio_path:
+            show_error("Wybierz plik audio.")
+            return
+
+        if mode == "Mono":
+            if not ir1_path:
+                show_error("W trybie Mono wybierz plik IR.")
+                return
+        else:
+            if not ir1_path or not ir2_path:
+                show_error("W trybie Stereo wybierz IR Left oraz IR Right.")
+                return
+
+        wet_frac = max(0.0, min(1.0, wet / 100.0))
+
+        # temp WAV (preview nie wymaga output_var)
+        ts = time.strftime("%Y-%m-%d_%H-%M-%S")
+        tmp = tempfile.NamedTemporaryFile(prefix=f"easyiresp_preview_{ts}_", suffix=".wav", delete=False)
+        tmp_path = tmp.name
+        tmp.close()
+        self._preview_temp_path = tmp_path
+
+        # UI
+        self.preview_button.configure(text="⏹ Stop preview", state="disabled")
+        self.status_label.configure(text="Trwa przygotowanie preview (splot audio)...")
+
+        def worker():
+            try:
+                use_hrtf = bool(self.hrtf_var.get())
+                hrtf_db_path = self.controller.get_hrtf_db_path() if use_hrtf else ""
+                hrtf_az = int(self.hrtf_az_var.get()) if use_hrtf else 0
+                hrtf_el = int(self.hrtf_el_var.get()) if use_hrtf else 0
+
+                if use_hrtf and not hrtf_db_path:
+                    raise ValueError("HRTF włączone, ale nie wybrano pliku bazy HRTF (.mat) w Settings.")
+
+                if mode == "Mono":
+                    out_file = convolve_audio_files(
+                        audio_path=audio_path,
+                        mode="Mono",
+                        ir_mono_path=ir1_path,
+                        wet=wet_frac,
+                        output_path=tmp_path,
+                        use_hrtf=use_hrtf,
+                        hrtf_db_path=hrtf_db_path,
+                        hrtf_az_deg=hrtf_az,
+                        hrtf_el_deg=hrtf_el,
+                    )
+                else:
+                    out_file = convolve_audio_files(
+                        audio_path=audio_path,
+                        mode="Stereo",
+                        ir_left_path=ir1_path,
+                        ir_right_path=ir2_path,
+                        wet=wet_frac,
+                        output_path=tmp_path,
+                    )
+
+                if not out_file or not os.path.isfile(out_file):
+                    raise RuntimeError("Nie udało się wygenerować pliku preview.")
+
+                # wczytaj do podglądu wykresów (Twoja istniejąca funkcja)
+                self._load_convolved_audio(out_file)
+
+                # przygotuj odtwarzanie
+                data, fs = sf.read(out_file, always_2d=True)
+                data = data.astype(np.float32)
+
+                # wybór wyjścia audio: bierzemy Output device z Settings (jak w pomiarze)
+                audio_cfg = self.controller.get_measurement_audio_config()
+                out_dev = None
+                if audio_cfg and isinstance(audio_cfg, dict):
+                    out_dev = audio_cfg.get("output_device", None)
+
+                def start_playback():
+                    try:
+                        self._preview_is_playing = True
+                        self.preview_button.configure(text="⏹ Stop preview", state="normal")
+                        self.status_label.configure(text="Preview: odtwarzanie...")
+
+                        sd.play(data, samplerate=int(fs), device=out_dev)
+
+                        # wątek kończący: czeka aż skończy się grać i sprząta
+                        def wait_end():
+                            try:
+                                sd.wait()
+                            except Exception:
+                                pass
+                            # jeśli user nie kliknął stop wcześniej, to też sprzątamy
+                            self.after(0, self._stop_preview)
+
+                        threading.Thread(target=wait_end, daemon=True).start()
+
+                        # odśwież wykresy
+                        self.update_plots()
+
+                    except Exception as e:
+                        show_error(f"Nie udało się odtworzyć preview:\n\n{e}")
+                        self._stop_preview()
+
+                self.after(0, start_playback)
+
+            except Exception as e:
+                def fail():
+                    show_error(str(e))
+                    if hasattr(self, "preview_button"):
+                        self.preview_button.configure(text="🔊 Preview", state="normal")
+                    self.status_label.configure(text="Błąd podczas preview.")
+                    # usuń temp
+                    if self._preview_temp_path and os.path.isfile(self._preview_temp_path):
+                        try:
+                            os.remove(self._preview_temp_path)
+                        except Exception:
+                            pass
+                    self._preview_temp_path = None
+
+                self.after(0, fail)
+
+        threading.Thread(target=worker, daemon=True).start()
 
 
 class MeasurementPage(ctk.CTkFrame):
