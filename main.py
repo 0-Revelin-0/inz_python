@@ -214,7 +214,7 @@ class ConvolutionPage(ctk.CTkFrame):
         # ---------------- IR FIELDS (pod trybem) ----------------
         self.ir_frame = ctk.CTkFrame(left)
         self.ir_frame.grid(row=2, column=0, sticky="ew", pady=(0, 15))
-        self._update_ir_fields()
+
 
         # ---------------- Plik audio ----------------
         ctk.CTkLabel(left, text="Plik audio:", font=("Arial", 14, "bold")).grid(
@@ -297,6 +297,8 @@ class ConvolutionPage(ctk.CTkFrame):
             justify="left",
         )
         self.status_label.pack(fill="x", pady=(2, 0))
+
+        self._update_ir_fields()
 
         # =========================================================
         # PRAWA STRONA – WYBÓR KANAŁU + TABVIEW Z WYKRESAMI
@@ -836,6 +838,27 @@ class ConvolutionPage(ctk.CTkFrame):
         if hasattr(self, "ax_ir"):
             self.update_plots()
 
+        self._update_hrtf_availability()
+
+    def _update_hrtf_availability(self):
+        """
+        HRTF dostępne TYLKO w trybie Mono.
+        W Stereo: switch disabled + HRTF OFF.
+        """
+        mode = self.mode_var.get()
+
+        if mode == "Mono":
+            # odblokuj HRTF
+            self.hrtf_switch.configure(state="normal")
+        else:
+            # wymuś wyłączenie HRTF
+            if self.hrtf_var.get():
+                self.hrtf_var.set(False)
+                self._on_hrtf_toggle()
+
+            # zablokuj switch
+            self.hrtf_switch.configure(state="disabled")
+
     def _make_ir_row(self, var, label_text):
         row = ctk.CTkFrame(self.ir_frame)
         row.pack(fill="x", pady=3)
@@ -1104,6 +1127,16 @@ class ConvolutionPage(ctk.CTkFrame):
         def worker():
             try:
                 # TODO: w następnym kroku tutaj podłączymy faktyczne użycie HRTF
+
+                use_hrtf = bool(self.hrtf_var.get())
+                hrtf_db_path = self.controller.get_hrtf_db_path() if use_hrtf else ""
+                hrtf_az = int(self.hrtf_az_var.get()) if use_hrtf else 0
+                hrtf_el = int(self.hrtf_el_var.get()) if use_hrtf else 0
+
+                if use_hrtf and not hrtf_db_path:
+                    raise ValueError("HRTF włączone, ale nie wybrano pliku bazy HRTF (.mat) w Settings.")
+
+
                 if mode == "Mono":
                     out_file = convolve_audio_files(
                         audio_path=audio_path,
@@ -1111,6 +1144,10 @@ class ConvolutionPage(ctk.CTkFrame):
                         ir_mono_path=ir1_path,
                         wet=wet_frac,
                         output_path=out_path,
+                        use_hrtf=use_hrtf,
+                        hrtf_db_path=hrtf_db_path,
+                        hrtf_az_deg=hrtf_az,
+                        hrtf_el_deg=hrtf_el,
                     )
                 else:
                     out_file = convolve_audio_files(
@@ -1120,6 +1157,7 @@ class ConvolutionPage(ctk.CTkFrame):
                         ir_right_path=ir2_path,
                         wet=wet_frac,
                         output_path=out_path,
+
                     )
 
                 if out_file:
@@ -2556,6 +2594,27 @@ class SettingsPage(ctk.CTkFrame):
         self.mfp_dev_entry.insert(0, "10")
         self.mfp_dev_entry.grid(row=3, column=1, sticky="w")
 
+        # ==============================
+        # Ustawienia splotu -> HRTF
+        # ==============================
+        conv_tab = self.tabs.add("Splot audio")  # jeśli Twoje TabView nazywa się inaczej niż self.tabs, użyj tej nazwy
+
+        self.hrtf_db_var = ctk.StringVar(value="")
+
+        ctk.CTkLabel(conv_tab, text="HRTF", font=("Roboto", 18, "bold")).pack(anchor="w", padx=15, pady=(15, 5))
+        ctk.CTkLabel(
+            conv_tab,
+            text="Wybierz plik .mat z bazą HRTF (dla konkretnej osoby).",
+            text_color="#cccccc"
+        ).pack(anchor="w", padx=15, pady=(0, 10))
+
+        row = ctk.CTkFrame(conv_tab)
+        row.pack(fill="x", padx=15, pady=(0, 15))
+
+        ctk.CTkEntry(row, textvariable=self.hrtf_db_var).pack(side="left", fill="x", expand=True, padx=(0, 8))
+        ctk.CTkButton(row, text="Wybierz", width=120, command=self._choose_hrtf_db_mat).pack(side="right")
+
+
         # # =========================================================
         # # 4) PARAMETRY PÓŹNEGO POGŁOSU (T60)
         # # =========================================================
@@ -2607,6 +2666,8 @@ class SettingsPage(ctk.CTkFrame):
     # =====================================================================
     # --- DEVICE HANDLING (jak wcześniej) ---
     # =====================================================================
+
+
 
     def get_generator_config(self):
         """
@@ -2896,6 +2957,25 @@ class SettingsPage(ctk.CTkFrame):
 
         return None
 
+    def _choose_hrtf_db_mat(self):
+        path = filedialog.askopenfilename(
+            title="Wybierz bazę HRTF (.mat)",
+            filetypes=[("MATLAB file", "*.mat"), ("All files", "*.*")]
+        )
+        if path:
+            self.hrtf_db_var.set(path)
+            try:
+                self.controller.set_hrtf_db_path(path)
+            except Exception:
+                pass
+
+    def get_hrtf_db_path(self) -> str:
+        try:
+            return self.hrtf_db_var.get().strip()
+        except Exception:
+            return ""
+
+
     def _on_ir_window_change(self, event=None):
         if hasattr(self, "_ir_window_after_id") and self._ir_window_after_id is not None:
             try:
@@ -3178,6 +3258,14 @@ class EasyIResponseApp(ctk.CTk):
         settings_page = self.pages["settings"]
         return settings_page.get_generator_config()
 
+    # ---------------- HRTF DB PATH (global for app) ----------------
+    def set_hrtf_db_path(self, path: str):
+        self.hrtf_db_path = path or ""
+
+    def get_hrtf_db_path(self) -> str:
+        return getattr(self, "hrtf_db_path", "")
+
+
 
     def _safe_close(self):
         # 1. Stop input meter
@@ -3217,6 +3305,9 @@ class EasyIResponseApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.anim_after_id = None
+
+        self.hrtf_db_path = ""
+
 
         # Okno
         self.title("Easy IResponse")

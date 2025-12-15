@@ -88,9 +88,14 @@ def convolve_audio_files(
     ir_mono_path: Optional[str] = None,
     ir_left_path: Optional[str] = None,
     ir_right_path: Optional[str] = None,
-    wet: float = 1.0,                  # wet z GUI (0..1)
+    wet: float = 1.0,
     output_path: Optional[str] = None,
+    use_hrtf: bool = False,
+    hrtf_db_path: Optional[str] = None,
+    hrtf_az_deg: float = 0.0,
+    hrtf_el_deg: float = 0.0,
 ) -> str:
+
     """
     Silnik splotu audio z RMS matching + logarytmicznym wet/dry.
     """
@@ -112,6 +117,32 @@ def convolve_audio_files(
 
     audio_L = audio[:, 0]
     audio_R = audio[:, 1] if C == 2 else None
+
+
+    # ---------------------- HRTF (PRE-CONV) ----------------------
+    if use_hrtf:
+        if mode != "Mono":
+            raise ValueError("HRTF jest dostępne tylko w trybie Mono.")
+
+        if not hrtf_db_path:
+            raise ValueError("Nie wybrano pliku bazy HRTF (.mat) w Settings.")
+
+        from hrtf_engine import apply_hrtf_to_audio
+
+        audio = apply_hrtf_to_audio(
+            audio=audio,
+            fs_audio=fs_audio,
+            mat_path=hrtf_db_path,
+            az_deg=float(hrtf_az_deg),
+            el_deg=float(hrtf_el_deg),
+            downmix_stereo_to_mono=True,  # Twoje: opcja 2
+        )
+
+        # odśwież wymiary po HRTF
+        N, C = audio.shape
+        audio_L = audio[:, 0]
+        audio_R = audio[:, 1] if C == 2 else None
+
 
     # ---------------------- IR ----------------------
 
@@ -138,8 +169,11 @@ def convolve_audio_files(
         if fs_L != fs_audio or fs_R != fs_audio:
             raise ValueError("Sample rate IR i audio muszą być takie same.")
 
-        ir_L = _downmix_to_mono(ir_L)[:, 0]
-        ir_R = _downmix_to_mono(ir_R)[:, 0]
+        if ir_L.shape[1] != 1 or ir_R.shape[1] != 1:
+            raise ValueError(
+                "W trybie Stereo IR_L i IR_R muszą być plikami mono "
+                "(np. binauralny pomiar L/R)."
+            )
 
         ir_L, ir_R = _normalize_ir_stereo(ir_L, ir_R)
 
@@ -155,30 +189,26 @@ def convolve_audio_files(
             y_R = _fft_convolve_1d(audio_R, ir)
             out_channels = 2
 
-    else:  # Stereo
+    if mode == "Stereo":
+        audio_mono = audio_L if C == 1 else 0.5 * (audio_L + audio_R)
 
-        if C == 1:
-            y_L = _fft_convolve_1d(audio_L, ir_L)
-            y_R = _fft_convolve_1d(audio_L, ir_R)
-            out_channels = 2
-        else:
-            y_L = _fft_convolve_1d(audio_L, ir_L)
-            y_R = _fft_convolve_1d(audio_R, ir_R)
-            out_channels = 2
+        y_L = _fft_convolve_1d(audio_mono, ir_L)
+
+        y_R = _fft_convolve_1d(audio_mono, ir_R)
+
+        out_channels = 2
 
     # -------------------- RMS MATCHING -----------------------
-
-    # Dopasowanie poziomu pogłosu do poziomu sygnału oryginalnego.
-    dry_rms_L = _rms(audio_L)
-    wet_rms_L = _rms(y_L)
-    gain_L = dry_rms_L / wet_rms_L
-    y_L *= gain_L
-
-    if out_channels == 2:
-        dry_rms_R = _rms(audio_R)
-        wet_rms_R = _rms(y_R)
-        gain_R = dry_rms_R / wet_rms_R
-        y_R *= gain_R
+    # Wspólny gain dla stereo (żeby nie psuć balansu L/R).
+    if out_channels == 1:
+        gain = _rms(audio_L) / _rms(y_L)
+        y_L *= gain
+    else:
+        dry_stack = np.stack([audio_L, audio_R], axis=1)
+        wet_stack = np.stack([y_L, y_R], axis=1)
+        gain = _rms(dry_stack) / _rms(wet_stack)
+        y_L *= gain
+        y_R *= gain
 
     # -------------------- MIKSOWANIE -----------------------
 
