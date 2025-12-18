@@ -169,7 +169,7 @@ def build_binaural_ir_from_mono_ir(
     crossfade_ms: float = 10.0,
     early_spread_deg: float = 15.0,
     early_sources: int = 3,
-    late_sources: int = 12,
+    late_sources: int = 40,
     rng_seed: int | None = None,
 ) -> np.ndarray:
     """
