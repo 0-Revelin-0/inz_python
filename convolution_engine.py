@@ -10,7 +10,7 @@ from typing import Optional, Tuple
 import numpy as np
 import soundfile as sf
 
-from hrtf_engine import apply_hrtf_to_audio
+from hrtf_engine import build_binaural_ir_from_mono_ir
 
 
 # ============================== HELPERS ===============================
@@ -96,7 +96,13 @@ def convolve_audio_files(
     hrtf_db_path: Optional[str] = None,
     hrtf_az_deg: float = 0.0,
     hrtf_el_deg: float = 0.0,
+    hrtf_direct_tail_ms: float = 5.0,
+    hrtf_early_ms: float = 80.0,
+    hrtf_crossfade_ms: float = 10.0,
+    hrtf_early_spread_deg: float = 15.0,
 ) -> str:
+
+
 
     """
     Silnik splotu audio z RMS matching + logarytmicznym wet/dry.
@@ -121,27 +127,27 @@ def convolve_audio_files(
     audio_R = audio[:, 1] if C == 2 else None
 
 
-    # ---------------------- HRTF (PRE-CONV) ----------------------
-    if use_hrtf:
-        if mode != "Mono":
-            raise ValueError("HRTF jest dostępne tylko w trybie Mono.")
-
-        if not hrtf_db_path:
-            raise ValueError("Nie wybrano pliku bazy HRTF (.mat) w Settings.")
-
-        audio = apply_hrtf_to_audio(
-            audio=audio,
-            fs_audio=fs_audio,
-            mat_path=hrtf_db_path,
-            az_deg=float(hrtf_az_deg),
-            el_deg=float(hrtf_el_deg),
-            downmix_stereo_to_mono=True,  # Twoje: opcja 2
-        )
-
-        # odśwież wymiary po HRTF
-        N, C = audio.shape
-        audio_L = audio[:, 0]
-        audio_R = audio[:, 1] if C == 2 else None
+    # # ---------------------- HRTF (PRE-CONV) ----------------------
+    # if use_hrtf:
+    #     if mode != "Mono":
+    #         raise ValueError("HRTF jest dostępne tylko w trybie Mono.")
+    #
+    #     if not hrtf_db_path:
+    #         raise ValueError("Nie wybrano pliku bazy HRTF (.mat) w Settings.")
+    #
+    #     audio = apply_hrtf_to_audio(
+    #         audio=audio,
+    #         fs_audio=fs_audio,
+    #         mat_path=hrtf_db_path,
+    #         az_deg=float(hrtf_az_deg),
+    #         el_deg=float(hrtf_el_deg),
+    #         downmix_stereo_to_mono=True,  # Twoje: opcja 2
+    #     )
+    #
+    #     # odśwież wymiary po HRTF
+    #     N, C = audio.shape
+    #     audio_L = audio[:, 0]
+    #     audio_R = audio[:, 1] if C == 2 else None
 
 
     # ---------------------- IR ----------------------
@@ -157,6 +163,26 @@ def convolve_audio_files(
 
         ir = _downmix_to_mono(ir)[:, 0]
         ir = _normalize_ir_mono(ir)
+
+        binaural_ir = None
+        if use_hrtf:
+            if not hrtf_db_path:
+                raise ValueError("Nie wybrano pliku bazy HRTF (.mat) w Settings.")
+
+            # Budujemy binauralną IR stereo z IR mono
+            binaural_ir = build_binaural_ir_from_mono_ir(
+                ir_mono=ir,
+                fs=fs_audio,
+                mat_path=hrtf_db_path,
+                az_deg=float(hrtf_az_deg),
+                el_deg=float(hrtf_el_deg),
+                direct_tail_ms=float(hrtf_direct_tail_ms),
+                early_ms=float(hrtf_early_ms),
+                crossfade_ms=float(hrtf_crossfade_ms),
+                early_spread_deg=float(hrtf_early_spread_deg),
+                rng_seed=None,
+            )
+
 
     else:  # Stereo
 
@@ -181,13 +207,31 @@ def convolve_audio_files(
 
     if mode == "Mono":
 
-        if C == 1:
-            y_L = _fft_convolve_1d(audio_L, ir)
-            out_channels = 1
-        else:
-            y_L = _fft_convolve_1d(audio_L, ir)
-            y_R = _fft_convolve_1d(audio_R, ir)
+        if use_hrtf:
+            # HRTF => zawsze robimy stereo binaural
+            if binaural_ir is None:
+                raise ValueError("Błąd: binaural_ir jest None mimo use_hrtf=True.")
+
+            # wejście do binauralizacji powinno być mono
+            audio_mono = audio_L if C == 1 else 0.5 * (audio_L + audio_R)
+
+            y_L = _fft_convolve_1d(audio_mono, binaural_ir[:, 0])
+            y_R = _fft_convolve_1d(audio_mono, binaural_ir[:, 1])
             out_channels = 2
+
+            # Ujednolicamy dry do stereo (żeby miks wet/dry miał sens)
+            audio_L = audio_mono
+            audio_R = audio_mono
+
+        else:
+            # bez HRTF: dotychczasowa logika
+            if C == 1:
+                y_L = _fft_convolve_1d(audio_L, ir)
+                out_channels = 1
+            else:
+                y_L = _fft_convolve_1d(audio_L, ir)
+                y_R = _fft_convolve_1d(audio_R, ir)
+                out_channels = 2
 
     if mode == "Stereo":
         audio_mono = audio_L if C == 1 else 0.5 * (audio_L + audio_R)

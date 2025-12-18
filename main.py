@@ -1145,6 +1145,8 @@ class ConvolutionPage(ctk.CTkFrame):
                 hrtf_az = int(self.hrtf_az_var.get()) if use_hrtf else 0
                 hrtf_el = int(self.hrtf_el_var.get()) if use_hrtf else 0
 
+                hrtf_cfg = self.controller.pages["settings"].get_hrtf_convolution_config()
+
                 if use_hrtf and not hrtf_db_path:
                     raise ValueError("HRTF włączone, ale nie wybrano pliku bazy HRTF (.mat) w Settings.")
 
@@ -1160,6 +1162,10 @@ class ConvolutionPage(ctk.CTkFrame):
                         hrtf_db_path=hrtf_db_path,
                         hrtf_az_deg=hrtf_az,
                         hrtf_el_deg=hrtf_el,
+                        hrtf_direct_tail_ms=hrtf_cfg["direct_tail_ms"],
+                        hrtf_early_ms=hrtf_cfg["early_ms"],
+                        hrtf_crossfade_ms=hrtf_cfg["crossfade_ms"],
+                        hrtf_early_spread_deg=hrtf_cfg["early_spread_deg"],
                     )
                 else:
                     out_file = convolve_audio_files(
@@ -2622,6 +2628,9 @@ class SettingsPage(ctk.CTkFrame):
 
         self._mag_user_typing = False
 
+        # (early_ms trzymamy stałe 80ms, ale możesz też dać var jeśli chcesz)
+        self.hrtf_early_ms_var = ctk.StringVar(value="80")
+
         # ==============================
         # DOMYŚLNE MATERIAŁY – POCHŁANIANIE
         # ==============================
@@ -2957,12 +2966,46 @@ class SettingsPage(ctk.CTkFrame):
             text_color="#cccccc"
         ).pack(anchor="w", padx=15, pady=(0, 10))
 
+
+
+        # --- HRTF: parametry podziału IR ---
+        self.hrtf_direct_tail_var = ctk.StringVar(value="5.0")  # ms po peaku
+        self.hrtf_early_ms_var = ctk.StringVar(value="80.0")  # ms early reflections
+        self.hrtf_crossfade_ms_var = ctk.StringVar(value="10.0")  # ms crossfade Hann na granicach
+        self.hrtf_early_spread_var = ctk.StringVar(value="15.0")  # deg spread early
+
         row = ctk.CTkFrame(conv_tab)
         row.pack(fill="x", padx=15, pady=(0, 15))
 
-        ctk.CTkEntry(row, textvariable=self.hrtf_db_var).pack(side="left", fill="x", expand=True, padx=(0, 8))
-        ctk.CTkButton(row, text="Wybierz", width=120, command=self._choose_hrtf_db_mat).pack(side="right")
+        # --- Wybór pliku bazy HRTF (.mat) ---
+        ctk.CTkLabel(row, text="Baza HRTF (.mat):", width=160, anchor="w").pack(side="left")
 
+        self.hrtf_db_entry = ctk.CTkEntry(row, textvariable=self.hrtf_db_var)
+        self.hrtf_db_entry.pack(side="left", fill="x", expand=True, padx=(10, 10))
+
+        ctk.CTkButton(
+            row,
+            text="Wybierz…",
+            width=110,
+            command=self._choose_hrtf_db_mat
+        ).pack(side="left")
+
+        # --- Parametry HRTF (IR split + fades) ---
+        ctk.CTkLabel(conv_tab, text="Podział IR i wygładzanie (HRTF)", font=("Roboto", 14, "bold")).pack(
+            anchor="w", padx=15, pady=(5, 5)
+        )
+
+        def _row(label: str, var: ctk.StringVar):
+            r = ctk.CTkFrame(conv_tab)
+            r.pack(fill="x", padx=15, pady=4)
+            ctk.CTkLabel(r, text=label, width=260, anchor="w").pack(side="left")
+            ctk.CTkEntry(r, textvariable=var, width=120).pack(side="left")
+            return r
+
+        _row("Direct tail po peaku [ms]:", self.hrtf_direct_tail_var)
+        _row("Early reflections długość [ms]:", self.hrtf_early_ms_var)
+        _row("Crossfade Hann [ms]:", self.hrtf_crossfade_ms_var)
+        _row("Early spread azymutu [deg]:", self.hrtf_early_spread_var)
 
         # # =========================================================
         # # 4) PARAMETRY PÓŹNEGO POGŁOSU (T60)
@@ -3339,6 +3382,29 @@ class SettingsPage(ctk.CTkFrame):
         except Exception:
             return ""
 
+    def get_hrtf_convolution_config(self) -> dict:
+        """Zwraca parametry HRTF dla splotu (direct/early/late)."""
+
+        def _f(var: ctk.StringVar, default: float) -> float:
+            try:
+                return float(var.get().strip().replace(",", "."))
+            except Exception:
+                return float(default)
+
+        cfg = {
+            "direct_tail_ms": _f(self.hrtf_direct_tail_var, 5.0),
+            "early_ms": _f(self.hrtf_early_ms_var, 80.0),
+            "crossfade_ms": _f(self.hrtf_crossfade_ms_var, 10.0),
+            "early_spread_deg": _f(self.hrtf_early_spread_var, 15.0),
+        }
+
+        # proste zabezpieczenia (żeby nie było wartości ujemnych)
+        cfg["direct_tail_ms"] = max(0.0, cfg["direct_tail_ms"])
+        cfg["early_ms"] = max(0.0, cfg["early_ms"])
+        cfg["crossfade_ms"] = max(0.0, cfg["crossfade_ms"])
+        cfg["early_spread_deg"] = max(0.0, cfg["early_spread_deg"])
+
+        return cfg
 
     def _on_ir_window_change(self, event=None):
         if hasattr(self, "_ir_window_after_id") and self._ir_window_after_id is not None:

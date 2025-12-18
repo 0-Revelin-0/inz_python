@@ -156,3 +156,158 @@ def apply_hrtf_to_audio(
 
     out = np.column_stack([yL, yR]).astype(np.float32, copy=False)
     return out
+
+
+def build_binaural_ir_from_mono_ir(
+    ir_mono: np.ndarray,
+    fs: int,
+    mat_path: str,
+    az_deg: float,
+    el_deg: float,
+    direct_tail_ms: float = 5.0,
+    early_ms: float = 80.0,
+    crossfade_ms: float = 10.0,
+    early_spread_deg: float = 15.0,
+    early_sources: int = 3,
+    late_sources: int = 12,
+    rng_seed: int | None = None,
+) -> np.ndarray:
+    """
+    Finalna logika:
+    - DIRECT: 0 .. (peak + direct_tail_ms) -> 1 HRIR z GUI
+    - EARLY:  (peak + direct_tail_ms) .. (peak + early_ms) -> suma kilku HRIR blisko GUI (spread)
+    - LATE:   (peak + early_ms) .. koniec -> suma wielu HRIR losowo po azymucie (wszechkierunkowo)
+    Crossfade Hann na granicach, żeby nie było “dziur”.
+    """
+
+    if ir_mono.ndim != 1:
+        ir_mono = np.asarray(ir_mono).reshape(-1)
+
+    ir_mono = ir_mono.astype(np.float32, copy=False)
+    N = len(ir_mono)
+    if N < 4:
+        raise ValueError("IR jest za krótka do binauralizacji.")
+
+    rng = np.random.default_rng(rng_seed)
+
+    # --- Peak (direct arrival) ---
+    peak_idx = int(np.argmax(np.abs(ir_mono)))
+
+    direct_end = peak_idx + int(round(float(direct_tail_ms) * fs / 1000.0))
+    direct_end = int(np.clip(direct_end, 0, N))
+
+    early_end = peak_idx + int(round(float(early_ms) * fs / 1000.0))
+    early_end = int(np.clip(early_end, direct_end, N))
+
+    # Crossfade (Hann) na granicach fragmentów
+    xfade = int(round(float(crossfade_ms) * fs / 1000.0))
+    xfade = max(0, xfade)
+    half = xfade // 2  # pół po obu stronach granicy
+
+    def _fade_in(L: int) -> np.ndarray:
+        if L <= 0:
+            return np.ones(0, dtype=np.float32)
+        t = np.linspace(0.0, np.pi, L, endpoint=True, dtype=np.float32)
+        return 0.5 * (1.0 - np.cos(t))  # 0 -> 1 (raised cosine)
+
+    def _fade_out(L: int) -> np.ndarray:
+        fi = _fade_in(L)
+        return (1.0 - fi).astype(np.float32, copy=False)  # 1 -> 0
+
+    direct = np.zeros(N, dtype=np.float32)
+    early = np.zeros(N, dtype=np.float32)
+    late = np.zeros(N, dtype=np.float32)
+
+    # ---------- Granica 1: direct <-> early ----------
+    s1 = max(0, direct_end - half)
+    e1 = min(N, direct_end + half)
+    L1 = max(0, e1 - s1)
+
+    d0_end = max(0, s1)
+    direct[:d0_end] += ir_mono[:d0_end]
+
+    if L1 > 0:
+        w_in = _fade_in(L1)
+        w_out = _fade_out(L1)
+        direct[s1:e1] += ir_mono[s1:e1] * w_out
+        early[s1:e1] += ir_mono[s1:e1] * w_in
+
+    # early środek (bez okna)
+    e_mid_start = e1
+    e_mid_end = max(e_mid_start, max(0, early_end - half))
+    if e_mid_end > e_mid_start:
+        early[e_mid_start:e_mid_end] += ir_mono[e_mid_start:e_mid_end]
+
+    # ---------- Granica 2: early <-> late ----------
+    s2 = max(0, early_end - half)
+    e2 = min(N, early_end + half)
+    L2 = max(0, e2 - s2)
+
+    if L2 > 0:
+        w_in2 = _fade_in(L2)
+        w_out2 = _fade_out(L2)
+        early[s2:e2] += ir_mono[s2:e2] * w_out2
+        late[s2:e2] += ir_mono[s2:e2] * w_in2
+
+    l0_start = e2
+    if l0_start < N:
+        late[l0_start:] += ir_mono[l0_start:]
+
+    # ------------------------------------------------------------------
+    # Kierunki (DIRECT / EARLY / LATE)
+    # ------------------------------------------------------------------
+    az_gui = float(az_deg)
+    el_gui = float(el_deg)
+
+    # EARLY: GUI + kilka losowych odchyleń (spread)
+    early_sources = int(max(1, early_sources))
+    early_dirs = [(az_gui, el_gui)]
+    for _ in range(early_sources - 1):
+        az_e = az_gui + float(rng.uniform(-early_spread_deg, early_spread_deg))
+        el_e = el_gui
+        early_dirs.append((az_e, el_e))
+
+    # LATE: wiele losowych kierunków (wszechkierunkowo)
+    late_sources = int(max(1, late_sources))
+    late_dirs = []
+    for _ in range(late_sources):
+        az_l = float(rng.uniform(-180.0, 180.0))
+        el_l = 0.0
+        late_dirs.append((az_l, el_l))
+
+    # ------------------------------------------------------------------
+    # Suma równoległa HRIR z normalizacją energii (1/sqrt(K))
+    # ------------------------------------------------------------------
+    def _sum_hrtf(audio_mono_1d: np.ndarray, dirs: list[tuple[float, float]]) -> np.ndarray:
+        K = len(dirs)
+        if K == 1:
+            az, el = dirs[0]
+            return apply_hrtf_to_audio(
+                audio=audio_mono_1d.reshape(-1, 1),
+                fs_audio=fs,
+                mat_path=mat_path,
+                az_deg=az,
+                el_deg=el,
+                downmix_stereo_to_mono=True,
+            )
+        w = 1.0 / np.sqrt(float(K))
+        acc = None
+        for (az, el) in dirs:
+            bi = apply_hrtf_to_audio(
+                audio=audio_mono_1d.reshape(-1, 1),
+                fs_audio=fs,
+                mat_path=mat_path,
+                az_deg=az,
+                el_deg=el,
+                downmix_stereo_to_mono=True,
+            ).astype(np.float32, copy=False)
+            acc = (w * bi) if acc is None else (acc + w * bi)
+        return acc
+
+    d_bi = _sum_hrtf(direct, [(az_gui, el_gui)])
+    e_bi = _sum_hrtf(early, early_dirs)
+    l_bi = _sum_hrtf(late, late_dirs)
+
+    binaural_ir = (d_bi + e_bi + l_bi).astype(np.float32, copy=False)
+    return binaural_ir
+
