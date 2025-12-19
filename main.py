@@ -17,7 +17,9 @@ import soundfile as sf
 import webbrowser
 from matplotlib.ticker import LogLocator, StrMethodFormatter
 from matplotlib.ticker import ScalarFormatter
-
+import threading
+import tempfile
+import time
 
 
 
@@ -26,6 +28,7 @@ from measurement_engine import measure_ir
 from spl_calibration import PinkNoisePlayer, measure_input_level, InputLevelMonitor
 from synthesis_engine import generate_synthetic_ir_from_config
 from convolution_engine import convolve_audio_files
+from convolution_engine import normalize_to_dbfs
 
 
 #---------- Zaciąganie theme w .exe i .py ----------
@@ -1243,9 +1246,6 @@ class ConvolutionPage(ctk.CTkFrame):
 
     def _start_preview_convolution(self):
         """Robi splot w wątku, zapisuje do temp WAV, ładuje do podglądu i odtwarza."""
-        import threading
-        import tempfile
-        import time
 
         hrtf_cfg = self.controller.pages["settings"].get_hrtf_convolution_config()
 
@@ -1341,6 +1341,7 @@ class ConvolutionPage(ctk.CTkFrame):
                         self._preview_is_playing = True
                         self.preview_button.configure(text="⏹ Stop preview", state="normal")
                         self.status_label.configure(text="Preview: odtwarzanie...")
+
 
                         sd.play(data, samplerate=int(fs), device=out_dev)
 

@@ -81,6 +81,20 @@ def _rms(x: np.ndarray) -> float:
     """Root Mean Square sygnału."""
     return float(np.sqrt(np.mean(x**2)) + 1e-12)
 
+def normalize_to_dbfs(signal: np.ndarray, target_dbfs: float = -6.0) -> np.ndarray:
+    """
+    Normalizuje sygnał (mono lub stereo) wspólnym gainem do target_dbfs.
+    Zachowuje relację L/R.
+    """
+    target_peak = 10 ** (target_dbfs / 20.0)
+    peak = float(np.max(np.abs(signal)))
+
+    if peak > 0:
+        gain = target_peak / peak
+        signal = signal * gain
+
+    return signal
+
 
 # ============================ MAIN ENGINE ==============================
 
@@ -213,15 +227,28 @@ def convolve_audio_files(
                 raise ValueError("Błąd: binaural_ir jest None mimo use_hrtf=True.")
 
             # wejście do binauralizacji powinno być mono
+            from hrtf_engine import apply_hrtf_to_audio
+
             audio_mono = audio_L if C == 1 else 0.5 * (audio_L + audio_R)
 
+            # DRY = audio już po HRTF (bez IR)
+            dry_binaural = apply_hrtf_to_audio(
+                audio=audio_mono[:, None],
+                fs_audio=fs_audio,
+                mat_path=hrtf_db_path,
+                az_deg=hrtf_az_deg,
+                el_deg=hrtf_el_deg,
+                downmix_stereo_to_mono=True,
+            )
+
+            audio_L = dry_binaural[:, 0]
+            audio_R = dry_binaural[:, 1]
+
+            # WET = audio mono * binauralna IR
             y_L = _fft_convolve_1d(audio_mono, binaural_ir[:, 0])
             y_R = _fft_convolve_1d(audio_mono, binaural_ir[:, 1])
-            out_channels = 2
 
-            # Ujednolicamy dry do stereo (żeby miks wet/dry miał sens)
-            audio_L = audio_mono
-            audio_R = audio_mono
+            out_channels = 2
 
         else:
             # bez HRTF: dotychczasowa logika
@@ -276,6 +303,10 @@ def convolve_audio_files(
         outL = _mix(audio_L, y_L)
         outR = _mix(audio_R, y_R)
         out = np.stack([outL, outR], axis=1)
+
+    # -------------------- NORMALIZACJA DO -6 dBFS -----------------------
+
+    out = normalize_to_dbfs(out, target_dbfs=-6.0)
 
     # -------------------- Limiter -----------------------
 
