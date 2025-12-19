@@ -234,13 +234,17 @@ def convolve_audio_files(
                 out_channels = 2
 
     if mode == "Stereo":
+        # wejście do splotu stereo-IR robimy jako mono (typowe: źródło w środku)
         audio_mono = audio_L if C == 1 else 0.5 * (audio_L + audio_R)
 
         y_L = _fft_convolve_1d(audio_mono, ir_L)
-
         y_R = _fft_convolve_1d(audio_mono, ir_R)
-
         out_channels = 2
+
+        # WAŻNE: dry też musi być stereo dla miksu wet/dry + RMS matching
+        if C == 1:
+            audio_L = audio_mono
+            audio_R = audio_mono
 
     # -------------------- RMS MATCHING -----------------------
     # Wspólny gain dla stereo (żeby nie psuć balansu L/R).

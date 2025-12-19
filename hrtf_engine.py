@@ -61,8 +61,8 @@ def load_hrtf_database(mat_path: str) -> dict:
         raise ValueError("meta.pos ma niezgodny rozmiar z hM (liczba pozycji).")
 
     # Przyjęcie: pos[:,0] = azymut 0..360, pos[:,1] = elewacja
-    az = pos[:, 0].astype(np.float64, copy=False)
-    el = pos[:, 1].astype(np.float64, copy=False)
+    az = np.real(pos[:, 0]).astype(np.float64, copy=False)
+    el = np.real(pos[:, 1]).astype(np.float64, copy=False)
 
     # stimPar.SamplingRate
     try:
@@ -169,15 +169,31 @@ def build_binaural_ir_from_mono_ir(
     crossfade_ms: float = 10.0,
     early_spread_deg: float = 15.0,
     early_sources: int = 3,
-    late_sources: int = 40,
+    late_sources: int = 14,
+    late_pairing: bool = True,
+    late_time_jitter_ms: float = 6,
     rng_seed: int | None = None,
 ) -> np.ndarray:
     """
-    Finalna logika:
-    - DIRECT: 0 .. (peak + direct_tail_ms) -> 1 HRIR z GUI
-    - EARLY:  (peak + direct_tail_ms) .. (peak + early_ms) -> suma kilku HRIR blisko GUI (spread)
-    - LATE:   (peak + early_ms) .. koniec -> suma wielu HRIR losowo po azymucie (wszechkierunkowo)
-    Crossfade Hann na granicach, żeby nie było “dziur”.
+    FINALNA LOGIKA (zgodna z literaturą):
+
+    DIRECT:
+      - 1 HRIR, kierunek z GUI
+
+    EARLY:
+      - kilka HRIR (early_sources)
+      - kierunki: GUI ± early_spread_deg
+      - suma z normalizacją 1/sqrt(N)
+
+    LATE:
+      - wiele HRIR (late_sources)
+      - kierunki w parach ±az (diffuse field)
+      - mikro-jitter czasowy (late_time_jitter_ms)
+      - suma z normalizacją 1/sqrt(N)
+
+    Podział IR:
+      direct → early → late
+      z crossfade Hann-like na granicach
     """
 
     if ir_mono.ndim != 1:
@@ -185,129 +201,175 @@ def build_binaural_ir_from_mono_ir(
 
     ir_mono = ir_mono.astype(np.float32, copy=False)
     N = len(ir_mono)
-    if N < 4:
+    if N < 8:
         raise ValueError("IR jest za krótka do binauralizacji.")
 
     rng = np.random.default_rng(rng_seed)
 
-    # --- Peak (direct arrival) ---
+    # ------------------------------------------------------------
+    # PODZIAŁ IR
+    # ------------------------------------------------------------
     peak_idx = int(np.argmax(np.abs(ir_mono)))
 
-    direct_end = peak_idx + int(round(float(direct_tail_ms) * fs / 1000.0))
-    direct_end = int(np.clip(direct_end, 0, N))
+    direct_end = int(np.clip(
+        peak_idx + round(direct_tail_ms * fs / 1000.0),
+        0, N
+    ))
 
-    early_end = peak_idx + int(round(float(early_ms) * fs / 1000.0))
-    early_end = int(np.clip(early_end, direct_end, N))
+    early_end = int(np.clip(
+        peak_idx + round(early_ms * fs / 1000.0),
+        direct_end, N
+    ))
 
-    # Crossfade (Hann) na granicach fragmentów
-    xfade = int(round(float(crossfade_ms) * fs / 1000.0))
-    xfade = max(0, xfade)
-    half = xfade // 2  # pół po obu stronach granicy
+    xfade = int(round(crossfade_ms * fs / 1000.0))
+    half = max(1, xfade // 2)
 
-    def _fade_in(L: int) -> np.ndarray:
-        if L <= 0:
-            return np.ones(0, dtype=np.float32)
-        t = np.linspace(0.0, np.pi, L, endpoint=True, dtype=np.float32)
-        return 0.5 * (1.0 - np.cos(t))  # 0 -> 1 (raised cosine)
+    def fade_in(L):
+        t = np.linspace(0, np.pi, L, dtype=np.float32)
+        return 0.5 * (1 - np.cos(t))
 
-    def _fade_out(L: int) -> np.ndarray:
-        fi = _fade_in(L)
-        return (1.0 - fi).astype(np.float32, copy=False)  # 1 -> 0
+    def fade_out(L):
+        return 1.0 - fade_in(L)
 
     direct = np.zeros(N, dtype=np.float32)
     early = np.zeros(N, dtype=np.float32)
     late = np.zeros(N, dtype=np.float32)
 
-    # ---------- Granica 1: direct <-> early ----------
+    # direct → early
     s1 = max(0, direct_end - half)
     e1 = min(N, direct_end + half)
-    L1 = max(0, e1 - s1)
+    direct[:s1] = ir_mono[:s1]
+    direct[s1:e1] = ir_mono[s1:e1] * fade_out(e1 - s1)
+    early[s1:e1] = ir_mono[s1:e1] * fade_in(e1 - s1)
 
-    d0_end = max(0, s1)
-    direct[:d0_end] += ir_mono[:d0_end]
+    # early środek
+    early[e1:early_end - half] = ir_mono[e1:early_end - half]
 
-    if L1 > 0:
-        w_in = _fade_in(L1)
-        w_out = _fade_out(L1)
-        direct[s1:e1] += ir_mono[s1:e1] * w_out
-        early[s1:e1] += ir_mono[s1:e1] * w_in
-
-    # early środek (bez okna)
-    e_mid_start = e1
-    e_mid_end = max(e_mid_start, max(0, early_end - half))
-    if e_mid_end > e_mid_start:
-        early[e_mid_start:e_mid_end] += ir_mono[e_mid_start:e_mid_end]
-
-    # ---------- Granica 2: early <-> late ----------
+    # early → late
     s2 = max(0, early_end - half)
     e2 = min(N, early_end + half)
-    L2 = max(0, e2 - s2)
+    early[s2:e2] += ir_mono[s2:e2] * fade_out(e2 - s2)
+    late[s2:e2] = ir_mono[s2:e2] * fade_in(e2 - s2)
+    late[e2:] = ir_mono[e2:]
 
-    if L2 > 0:
-        w_in2 = _fade_in(L2)
-        w_out2 = _fade_out(L2)
-        early[s2:e2] += ir_mono[s2:e2] * w_out2
-        late[s2:e2] += ir_mono[s2:e2] * w_in2
+    # ------------------------------------------------------------
+    # FUNKCJE POMOCNICZE
+    # ------------------------------------------------------------
+    def shift_stereo(bi: np.ndarray, shift: int) -> np.ndarray:
+        if shift == 0:
+            return bi
+        N = bi.shape[0]
+        if shift > 0:
+            return np.pad(bi, ((shift, 0), (0, 0)))[:N]
+        else:
+            s = -shift
+            return np.pad(bi, ((0, s), (0, 0)))[s:s+N]
 
-    l0_start = e2
-    if l0_start < N:
-        late[l0_start:] += ir_mono[l0_start:]
-
-    # ------------------------------------------------------------------
-    # Kierunki (DIRECT / EARLY / LATE)
-    # ------------------------------------------------------------------
-    az_gui = float(az_deg)
-    el_gui = float(el_deg)
-
-    # EARLY: GUI + kilka losowych odchyleń (spread)
-    early_sources = int(max(1, early_sources))
-    early_dirs = [(az_gui, el_gui)]
-    for _ in range(early_sources - 1):
-        az_e = az_gui + float(rng.uniform(-early_spread_deg, early_spread_deg))
-        el_e = el_gui
-        early_dirs.append((az_e, el_e))
-
-    # LATE: wiele losowych kierunków (wszechkierunkowo)
-    late_sources = int(max(1, late_sources))
-    late_dirs = []
-    for _ in range(late_sources):
-        az_l = float(rng.uniform(-180.0, 180.0))
-        el_l = 0.0
-        late_dirs.append((az_l, el_l))
-
-    # ------------------------------------------------------------------
-    # Suma równoległa HRIR z normalizacją energii (1/sqrt(K))
-    # ------------------------------------------------------------------
-    def _sum_hrtf(audio_mono_1d: np.ndarray, dirs: list[tuple[float, float]]) -> np.ndarray:
+    def sum_hrtf(audio: np.ndarray, dirs: list, jitter_ms: float = 0.0) -> np.ndarray:
         K = len(dirs)
-        if K == 1:
-            az, el = dirs[0]
-            return apply_hrtf_to_audio(
-                audio=audio_mono_1d.reshape(-1, 1),
-                fs_audio=fs,
-                mat_path=mat_path,
-                az_deg=az,
-                el_deg=el,
-                downmix_stereo_to_mono=True,
-            )
-        w = 1.0 / np.sqrt(float(K))
+        w = 1.0 / np.sqrt(K)
+        jitter_samp = int(jitter_ms * fs / 1000.0)
         acc = None
-        for (az, el) in dirs:
+
+        for az, el in dirs:
             bi = apply_hrtf_to_audio(
-                audio=audio_mono_1d.reshape(-1, 1),
+                audio=audio.reshape(-1, 1),
                 fs_audio=fs,
                 mat_path=mat_path,
                 az_deg=az,
                 el_deg=el,
                 downmix_stereo_to_mono=True,
             ).astype(np.float32, copy=False)
-            acc = (w * bi) if acc is None else (acc + w * bi)
+
+            if jitter_samp > 0:
+                sh = rng.integers(-jitter_samp, jitter_samp + 1)
+                bi = shift_stereo(bi, sh)
+
+            acc = w * bi if acc is None else acc + w * bi
+
         return acc
 
-    d_bi = _sum_hrtf(direct, [(az_gui, el_gui)])
-    e_bi = _sum_hrtf(early, early_dirs)
-    l_bi = _sum_hrtf(late, late_dirs)
+    # ------------------------------------------------------------
+    # KIERUNKI
+    # ------------------------------------------------------------
+    az0, el0 = float(az_deg), float(el_deg)
+
+    # EARLY
+    early_dirs = [(az0, el0)]
+    for _ in range(max(1, early_sources) - 1):
+        early_dirs.append((
+            az0 + rng.uniform(-early_spread_deg, early_spread_deg),
+            el0
+        ))
+
+    # LATE – totalnie losowe kierunki z siatki HRIR, ale symetryczne (mirror)
+    # Elewacje ograniczamy do [-30..90] (Twoje wymaganie), ale tylko jeśli takie są w bazie.
+
+    mat_data = load_hrtf_database(mat_path)
+    az_all = mat_data["az_deg"].astype(np.float64, copy=False)
+    el_all = mat_data["el_deg"].astype(np.float64, copy=False)
+
+    EL_MIN, EL_MAX = -30.0, 90.0
+    valid_idx = np.where((el_all >= EL_MIN) & (el_all <= EL_MAX))[0]
+
+    if valid_idx.size == 0:
+        # awaryjnie: jeśli baza nie ma takich elewacji, bierzemy wszystko
+        valid_idx = np.arange(len(az_all), dtype=int)
+
+    # mapowanie (az, el) -> index (pozycje w tej bazie są zwykle dokładnymi wartościami siatki)
+    pos_to_idx: dict[tuple[float, float], int] = {}
+    for i in valid_idx:
+        pos_to_idx[(float(az_all[i]), float(el_all[i]))] = int(i)
+
+    def mirror_az_360(az_deg: float) -> float:
+        az360 = _to_az_360(az_deg)
+        return (360.0 - az360) % 360.0
+
+    # lista par indeksów, które mają swoje lustrzane odbicie w bazie na tej samej elewacji
+    pair_indices: list[tuple[int, int]] = []
+    for (az, el), i in pos_to_idx.items():
+        az_m = mirror_az_360(az)
+        key_m = (float(az_m), float(el))
+        j = pos_to_idx.get(key_m, None)
+        if j is None:
+            continue
+        # żeby nie dublować par (i,j) i (j,i)
+        if i <= j:
+            pair_indices.append((i, j))
+
+    late_dirs: list[tuple[float, float]] = []
+
+    if late_pairing and len(pair_indices) > 0:
+        pairs_needed = late_sources // 2
+        replace = len(pair_indices) < pairs_needed
+
+        chosen = rng.choice(len(pair_indices), size=pairs_needed, replace=replace)
+        for k in chosen:
+            i, j = pair_indices[int(k)]
+            late_dirs.append((float(az_all[i]), float(el_all[i])))
+            late_dirs.append((float(az_all[j]), float(el_all[j])))
+
+        # jeśli nieparzysta liczba źródeł – dobierz jeszcze jeden losowy kierunek
+        if late_sources % 2 == 1:
+            i = int(rng.choice(valid_idx))
+            late_dirs.append((float(az_all[i]), float(el_all[i])))
+
+    else:
+        # jeśli nie chcemy parowania albo nie da się sparować – losujemy po prostu z siatki
+        chosen = rng.choice(valid_idx, size=late_sources, replace=(valid_idx.size < late_sources))
+        for i in chosen:
+            late_dirs.append((float(az_all[int(i)]), float(el_all[int(i)])))
+
+    rng.shuffle(late_dirs)
+
+    # ------------------------------------------------------------
+    # BINAURALIZACJA
+    # ------------------------------------------------------------
+    d_bi = sum_hrtf(direct, [(az0, el0)], 0.0)
+    e_bi = sum_hrtf(early, early_dirs, 0.0)
+    l_bi = sum_hrtf(late, late_dirs, late_time_jitter_ms)
 
     binaural_ir = (d_bi + e_bi + l_bi).astype(np.float32, copy=False)
     return binaural_ir
+
 

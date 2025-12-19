@@ -1247,6 +1247,8 @@ class ConvolutionPage(ctk.CTkFrame):
         import tempfile
         import time
 
+        hrtf_cfg = self.controller.pages["settings"].get_hrtf_convolution_config()
+
         mode = self.mode_var.get()
         audio_path = self.audio_var.get().strip()
         ir1_path = self.ir1_var.get().strip()
@@ -1300,7 +1302,14 @@ class ConvolutionPage(ctk.CTkFrame):
                         hrtf_db_path=hrtf_db_path,
                         hrtf_az_deg=hrtf_az,
                         hrtf_el_deg=hrtf_el,
+
+                        # ⬇⬇⬇ TE LINIE DODAJEMY ⬇⬇⬇
+                        hrtf_direct_tail_ms=hrtf_cfg["direct_tail_ms"],
+                        hrtf_early_ms=hrtf_cfg["early_ms"],
+                        hrtf_crossfade_ms=hrtf_cfg["crossfade_ms"],
+                        hrtf_early_spread_deg=hrtf_cfg["early_spread_deg"],
                     )
+
                 else:
                     out_file = convolve_audio_files(
                         audio_path=audio_path,
