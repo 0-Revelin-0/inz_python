@@ -17,7 +17,7 @@ def generate_exponential_sweep(fs, duration, f_start, f_end):
 
     sweep = np.sin(K * (np.exp(L * t) - 1.0))
 
-    # 🔥 Minimalny fade-in + fade-out (po 1 ms)
+    # Minimalny fade-in + fade-out (po 1 ms)
     fade_len = int(fs * 0.005)  # 5 ms
     if fade_len > 1:
         window = np.ones_like(sweep)
@@ -352,10 +352,6 @@ def measure_ir(params, audio_cfg):
             rec_mono = recorded[:, 0] if np.ndim(recorded) > 1 else recorded
 
             ir = deconvolve_ir(rec_mono, inv, fs, ir_length_s)
-
-            # # wyrównanie finalne
-            # peak = int(np.argmax(np.abs(ir)))
-            # ir = np.roll(ir, -peak)
 
             # normalizacja
             ir /= (np.max(np.abs(ir)) + 1e-12)
