@@ -1,8 +1,5 @@
-# spl_calibration.py
-
 import numpy as np
 import sounddevice as sd
-import threading
 
 
 # =============================================================

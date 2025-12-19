@@ -2,14 +2,10 @@ from tkinter import filedialog
 import customtkinter as ctk
 import sounddevice as sd
 import tkinter as tk
-import threading
-import numpy as np
 import os
-import time
 import sys
 import tkinter.filedialog as fd
 import matplotlib.pyplot as plt
-import matplotlib
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 from pathlib import Path
@@ -17,10 +13,10 @@ import soundfile as sf
 import webbrowser
 from matplotlib.ticker import LogLocator, StrMethodFormatter
 from matplotlib.ticker import ScalarFormatter
-import threading
 import tempfile
+import threading
 import time
-
+import numpy as np
 
 
 #---------- Integracja między plikami ----------
@@ -28,7 +24,8 @@ from measurement_engine import measure_ir
 from spl_calibration import PinkNoisePlayer, measure_input_level, InputLevelMonitor
 from synthesis_engine import generate_synthetic_ir_from_config
 from convolution_engine import convolve_audio_files
-from convolution_engine import normalize_to_dbfs
+from measurement_engine import compute_mag_response, smooth_mag_response
+
 
 
 #---------- Zaciąganie theme w .exe i .py ----------
@@ -318,22 +315,6 @@ class ConvolutionPage(ctk.CTkFrame):
         # PRAWA STRONA – WYBÓR KANAŁU + TABVIEW Z WYKRESAMI
         # =========================================================
 
-        # # Panel wyboru kanału (jak w MeasurementPage)
-        # channel_frame = ctk.CTkFrame(right, fg_color="transparent")
-        # channel_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 0))
-        #
-        # ctk.CTkLabel(
-        #     channel_frame,
-        #     text="Kanał do podglądu:"
-        # ).pack(side="left", padx=(0, 10))
-        #
-        # self.channel_selector = ctk.CTkSegmentedButton(
-        #     channel_frame,
-        #     values=["L", "R"],
-        #     command=self._on_channel_change
-        # )
-        # self.channel_selector.pack(side="left")
-        # self.channel_selector.set("L")
 
         # ---------- TABVIEW na wykresy ----------
         self.plot_tabs = ctk.CTkTabview(
@@ -1085,8 +1066,7 @@ class ConvolutionPage(ctk.CTkFrame):
     # =============================================================
     def _start_convolution(self):
         """Start splotu audio w osobnym wątku."""
-        import threading
-        import time
+
 
         mode = self.mode_var.get()
         audio_path = self.audio_var.get().strip()
@@ -1141,7 +1121,6 @@ class ConvolutionPage(ctk.CTkFrame):
 
         def worker():
             try:
-                # TODO: w następnym kroku tutaj podłączymy faktyczne użycie HRTF
 
                 use_hrtf = bool(self.hrtf_var.get())
                 hrtf_db_path = self.controller.get_hrtf_db_path() if use_hrtf else ""
@@ -1423,12 +1402,6 @@ class MeasurementPage(ctk.CTkFrame):
         left = ctk.CTkFrame(main_frame, corner_radius=12)
         left.grid(row=0, column=0, padx=15, pady=15, sticky="ns")
 
-        # ---------- Kalibracja SPL ----------
-        # ctk.CTkLabel(left, text="Kalibracja SPL:", font=("Arial", 18, "bold")).pack(anchor="w", pady=(5, 2))
-        # self.spl_label = ctk.CTkLabel(left, text="Poziom niezmierzony.",
-        #                               font=("Arial", 14))
-        # self.spl_label.pack(anchor="w", pady=(0, 10))
-
         ctk.CTkLabel(left, text="Kalibracja SPL", font=("Arial", 18, "bold")).pack(
             anchor="n", pady=(10, 5)
         )
@@ -1521,20 +1494,6 @@ class MeasurementPage(ctk.CTkFrame):
             justify="center"
         )
         self.status_label.pack(fill="x", pady=(40, 20))
-
-        # # --- Dolny pasek statusu (footer) ---
-        # self.footer = ctk.CTkFrame(self, fg_color="transparent")
-        # self.footer.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(20, 10))
-        #
-        # self.status_label = ctk.CTkLabel(
-        #     self.footer,
-        #     text="",
-        #     font=("Arial", 16),
-        #     text_color="white",
-        #     anchor="center",
-        #     justify="center"
-        # )
-        # self.status_label.pack(fill="x", pady=(5, 5))
 
         # ==============================================================
         # PRAWA KOLUMNA — WYKRESY
@@ -1648,7 +1607,6 @@ class MeasurementPage(ctk.CTkFrame):
         Zakres częstotliwości bierzemy z pól start/end (tak jak do rysowania).
         """
         try:
-            import numpy as np
             settings_page = self.controller.pages["settings"]
         except Exception:
             return
@@ -1678,7 +1636,6 @@ class MeasurementPage(ctk.CTkFrame):
         try:
             smoothing = self.controller.get_smoothing_fraction()
             if smoothing is not None:
-                from measurement_engine import smooth_mag_response
                 mags_sm = []
                 for m in mags:
                     mags_sm.append(smooth_mag_response(freqs, m, fraction=smoothing))
@@ -1808,7 +1765,6 @@ class MeasurementPage(ctk.CTkFrame):
         smoothing = self.controller.get_smoothing_fraction()
 
         try:
-            from measurement_engine import smooth_mag_response
             if smoothing is None:
                 mag_plot = mag_db
             else:
@@ -1930,12 +1886,6 @@ class MeasurementPage(ctk.CTkFrame):
     # =====================================================================
     # FUNKCJE LOGICZNE (PLACEHOLDERS — DZIAŁAJĄCE)
     # =====================================================================
-
-    # def _calibrate_spl(self):
-    #     self.spl_label.configure(text="(calibration running...)")
-    #     self.status_label.configure(text="Kalibracja SPL... (placeholder)")
-    #
-    #     self.after(800, lambda: self.spl_label.configure(text="75 dB SPL zmierzone"))
 
     def _start_measurement(self):
         """Start pomiaru IR – wywołuje measurement_engine w osobnym wątku."""
@@ -2135,19 +2085,6 @@ class MeasurementPage(ctk.CTkFrame):
 
         threading.Thread(target=worker, daemon=True).start()
 
-    # def _start_pink_noise(self):
-    #     audio_cfg = self.controller.get_measurement_audio_config()
-    #     if audio_cfg is None:
-    #         show_error("Skonfiguruj urządzenia audio w Ustawieniach.")
-    #         return
-    #
-    #     if not hasattr(self, "pink_player"):
-    #         self.pink_player = PinkNoisePlayer()
-    #
-    #     self.pink_player.start(audio_cfg)
-    #     self.calib_status_label.configure(text="Kalibracja…", text_color="#cccccc")
-    #
-    #     self._poll_input_level()
 
     def _stop_pink_noise(self):
         if hasattr(self, "pink_player"):
@@ -2200,36 +2137,6 @@ class MeasurementPage(ctk.CTkFrame):
 
         self.input_level_monitor = InputLevelMonitor(audio_cfg, update_level)
         self.input_level_monitor.start()
-
-    # def _poll_input_level(self):
-    #     if not hasattr(self, "pink_player"):
-    #         return
-    #     if not self.pink_player.running:
-    #         return
-    #
-    #     audio_cfg = self.controller.get_measurement_audio_config()
-    #     result = measure_input_level(audio_cfg, duration=0.2)
-    #
-    #     rms_db = result["rms_db"]
-    #     peak_db = result["peak_db"]
-    #
-    #     if peak_db > -1:
-    #         txt = f"Peak {peak_db:.1f} dBFS — ZA GŁOŚNO!"
-    #         color = "#ff4444"
-    #     elif rms_db < -40:
-    #         txt = f"RMS {rms_db:.1f} dBFS — Za cicho"
-    #         color = "#ffaa00"
-    #     elif rms_db > -8:
-    #         txt = f"RMS {rms_db:.1f} dBFS — Może być za głośno"
-    #         color = "#ff8800"
-    #     else:
-    #         txt = f"RMS {rms_db:.1f} dBFS — OK"
-    #         color = "#44cc44"
-    #
-    #     self.calib_status_label.configure(text=txt, text_color=color)
-    #     self.after(300, self._poll_input_level)
-
-
 
 class GeneratorPage(ctk.CTkFrame):
     def __init__(self, parent, controller):
@@ -2489,8 +2396,7 @@ class GeneratorPage(ctk.CTkFrame):
             out_dir_path = Path.home()
 
         # Nazwa pliku: IR_SYN_{fs}Hz_{T}s_E{early}_L{late}_{timestamp}.wav
-        import time as _time
-        ts = _time.strftime("%Y%m%d_%H%M%S")
+        ts = time.strftime("%Y%m%d_%H%M%S")
         early_int = int(round(early_percent))
         late_int = 100 - early_int
         filename = f"IR_SYN_{fs}Hz_{ir_duration:.2f}s_E{early_int}_L{late_int}_{ts}.wav"
@@ -2504,7 +2410,6 @@ class GeneratorPage(ctk.CTkFrame):
 
         # 5) Obliczenie charakterystyki amplitudowej
         try:
-            from measurement_engine import compute_mag_response, smooth_mag_response
             freqs, mag_db = compute_mag_response(ir, fs)
 
             smoothing = self.controller.get_smoothing_fraction()
@@ -3017,53 +2922,6 @@ class SettingsPage(ctk.CTkFrame):
         _row("Crossfade Hann [ms]:", self.hrtf_crossfade_ms_var)
         _row("Early spread azymutu [deg]:", self.hrtf_early_spread_var)
 
-        # # =========================================================
-        # # 4) PARAMETRY PÓŹNEGO POGŁOSU (T60)
-        # # =========================================================
-        # section_t60 = ctk.CTkLabel(gen_frame, text="Późny pogłos (T60)", font=("Roboto", 20, "bold"))
-        # section_t60.grid(row=8, column=0, sticky="w", pady=(10, 5), padx=10)
-        #
-        # t60_frame = ctk.CTkFrame(gen_frame)
-        # t60_frame.grid(row=9, column=0, sticky="ew", padx=10, pady=(0, 15))
-        # t60_frame.grid_columnconfigure(1, weight=1)
-        #
-        # ctk.CTkLabel(t60_frame, text="Tryb obliczania T60:").grid(row=0, column=0, sticky="w", pady=5)
-        #
-        # self.t60_mode = ctk.StringVar(value="auto")
-        # self.t60_auto = ctk.CTkRadioButton(
-        #     t60_frame, text="Auto (Sabine)", variable=self.t60_mode, value="auto",
-        #     command=self._toggle_t60_manual
-        # )
-        # self.t60_auto.grid(row=0, column=2, sticky="w")
-        #
-        # self.t60_manual = ctk.CTkRadioButton(
-        #     t60_frame, text="Ręczne", variable=self.t60_mode, value="manual",
-        #     command=self._toggle_t60_manual
-        # )
-        # self.t60_manual.grid(row=0, column=3, sticky="w", padx=15)
-        #
-        # # Tabela T60 manual
-        # self.t60_entries = {}
-        # t60_freqs = ["125", "250", "500", "1k", "2k", "4k"]
-        #
-        # t60_table = ctk.CTkFrame(t60_frame)
-        # t60_table.grid(row=1, column=0, columnspan=3, pady=10)
-        #
-        # ctk.CTkLabel(t60_table, text="Czas pogłosu T60 [s]").grid(row=0, column=0, columnspan=7, pady=5)
-        #
-        # ctk.CTkLabel(t60_table, text="").grid(row=1, column=0)
-        # for i, f in enumerate(t60_freqs):
-        #     ctk.CTkLabel(t60_table, text=f"{f} Hz").grid(row=1, column=i + 1, padx=10)
-        #
-        # for i, f in enumerate(t60_freqs):
-        #     e = ctk.CTkEntry(t60_table, width=60)
-        #     e.insert(0, "0.6")
-        #     e.grid(row=2, column=i + 1, padx=5, pady=5)
-        #     self.t60_entries[f] = e
-        #
-        # # Domyślnie pola manual T60 są zablokowane
-        # for e in self.t60_entries.values():
-        #     e.configure(state="disabled")
 
     # =====================================================================
     # --- DEVICE HANDLING (jak wcześniej) ---
@@ -3213,11 +3071,6 @@ class SettingsPage(ctk.CTkFrame):
             "mfp_dev_percent": mfp_dev_percent,
         }
 
-
-    # def _toggle_t60_manual(self):
-    #     manual = (self.t60_mode.get() == "manual")
-    #     for e in self.t60_entries.values():
-    #         e.configure(state="normal" if manual else "disabled")
 
     def stop_input_monitor(self):
         """Bezpieczne zatrzymanie miernika wejścia."""
@@ -4081,7 +3934,7 @@ class EasyIResponseApp(ctk.CTk):
 
 
 # --------------------------------------------------
-# START
+# START PROGRAMU - OBY DZIŁAŁO
 # --------------------------------------------------
 if __name__ == "__main__":
     app = EasyIResponseApp()

@@ -1,10 +1,6 @@
-# hrtf_engine.py
 from __future__ import annotations
-
 import os
 from functools import lru_cache
-from typing import Tuple
-
 import numpy as np
 from scipy.io import loadmat
 from scipy.signal import fftconvolve

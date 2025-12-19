@@ -1,16 +1,10 @@
-# ============================================================
-#   convolution_engine.py – WERSJA POPRAWIONA
-#   – RMS matching
-#   – logarytmiczny slider wet/dry
-#   – downmix, FFT convolution
-# ============================================================
-
 import os
 from typing import Optional, Tuple
 import numpy as np
 import soundfile as sf
 
 from hrtf_engine import build_binaural_ir_from_mono_ir
+from hrtf_engine import apply_hrtf_to_audio
 
 
 # ============================== HELPERS ===============================
@@ -141,29 +135,6 @@ def convolve_audio_files(
     audio_R = audio[:, 1] if C == 2 else None
 
 
-    # # ---------------------- HRTF (PRE-CONV) ----------------------
-    # if use_hrtf:
-    #     if mode != "Mono":
-    #         raise ValueError("HRTF jest dostępne tylko w trybie Mono.")
-    #
-    #     if not hrtf_db_path:
-    #         raise ValueError("Nie wybrano pliku bazy HRTF (.mat) w Settings.")
-    #
-    #     audio = apply_hrtf_to_audio(
-    #         audio=audio,
-    #         fs_audio=fs_audio,
-    #         mat_path=hrtf_db_path,
-    #         az_deg=float(hrtf_az_deg),
-    #         el_deg=float(hrtf_el_deg),
-    #         downmix_stereo_to_mono=True,  # Twoje: opcja 2
-    #     )
-    #
-    #     # odśwież wymiary po HRTF
-    #     N, C = audio.shape
-    #     audio_L = audio[:, 0]
-    #     audio_R = audio[:, 1] if C == 2 else None
-
-
     # ---------------------- IR ----------------------
 
     if mode == "Mono":
@@ -227,7 +198,6 @@ def convolve_audio_files(
                 raise ValueError("Błąd: binaural_ir jest None mimo use_hrtf=True.")
 
             # wejście do binauralizacji powinno być mono
-            from hrtf_engine import apply_hrtf_to_audio
 
             audio_mono = audio_L if C == 1 else 0.5 * (audio_L + audio_R)
 
