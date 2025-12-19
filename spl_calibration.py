@@ -9,7 +9,7 @@ import threading
 # 1. GENERACJA RÓŻOWEGO SZUMU (Pink Noise)
 # =============================================================
 
-def generate_pink_noise(duration, fs, level_db=-12):
+def generate_pink_noise(duration, fs, level_db=-3):
     """
     Generacja różowego szumu metodą filtracji białego szumu
     przez filtr 1/f.
