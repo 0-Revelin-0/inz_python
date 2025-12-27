@@ -8,6 +8,7 @@ def generate_exponential_sweep(fs, duration, f_start, f_end):
     if f_start <= 0:
         raise ValueError("f_start musi być > 0 Hz")
 
+    # generowanie parametrów
     R = float(f_end) / float(f_start)
     n_samples = int(fs * duration)
     t = np.linspace(0.0, duration, n_samples, endpoint=False)
@@ -15,20 +16,22 @@ def generate_exponential_sweep(fs, duration, f_start, f_end):
     K = duration * 2.0 * np.pi * f_start / np.log(R)
     L = np.log(R) / duration
 
+    #core generowania sweepa
     sweep = np.sin(K * (np.exp(L * t) - 1.0))
 
-    # Minimalny fade-in + fade-out (po 1 ms)
+    # minimalny fade-in + fade-out, aby zniwelować strzały
     fade_len = int(fs * 0.005)  # 5 ms
     if fade_len > 1:
         window = np.ones_like(sweep)
-        # fade-in
-        window[:fade_len] = np.linspace(0.0, 1.0, fade_len)
-        # fade-out
-        window[-fade_len:] = np.linspace(1.0, 0.0, fade_len)
+        fade = 0.5 * (1 - np.cos(np.linspace(0, np.pi, fade_len)))
+
+        window[:fade_len] *= fade
+        window[-fade_len:] *= fade[::-1]
+
         sweep *= window
 
     # normalizacja
-    sweep /= np.max(np.abs(sweep)) + 1e-12
+    sweep /= np.max(np.abs(sweep)) + 1e-12 #Zabezpieczenie przed dzieleniem przez 0
 
     return sweep.astype(np.float32)
 
@@ -36,24 +39,32 @@ def generate_exponential_sweep(fs, duration, f_start, f_end):
 
 def generate_inverse_filter(sweep, fs, f_start, f_end):
     """
-    Inverse filter do ESS:
-    - odwrócenie w czasie
-    - korekcja amplitudy malejąca eksponencjalnie
-      (tak jak w klasycznej metodzie Fariny).
+    Inverse filter do metody ESS (Farina – Time Reversal Mirror).
     """
+
+    sweep = np.asarray(sweep, dtype=np.float64)
+
     n = len(sweep)
-    duration = n / fs
-    t = np.linspace(0, duration, n, endpoint=False)
+    T = n / fs
+    t = np.linspace(0.0, T, n, endpoint=False)
 
-    L = np.log(f_end / f_start) / duration
+    # parametr ESS
+    if f_start <= 0.0:
+        raise ValueError("f_start musi być > 0 Hz")
+    if f_end <= f_start:
+        raise ValueError("f_end musi być > f_start")
 
-    # odwrócony sweep + ważenie
-    sweep_rev = sweep[::-1]
-    w = np.exp(-L * t)  # kompensacja gęstości energii
-    inv = sweep_rev * w
+    L = np.log(f_end / f_start) / T
 
-    inv /= np.max(np.abs(inv) + 1e-12)
+    # Time Reversal Mirror oraz ważenie amplitudowe (+3 dB / okt)
+    inv = sweep[::-1] * np.exp(-L * t)
+
+    # Normalizacja (stabilna numerycznie)
+    inv /= np.max(np.abs(inv)) + 1e-12
+
     return inv.astype(np.float32)
+
+
 
 
 def _play_record(play_sig, fs, audio_cfg):
@@ -123,23 +134,15 @@ def _play_record(play_sig, fs, audio_cfg):
 
 
 
-def playrec_sweep(sweep, fs, audio_cfg, extra_silence=1.0):
-    """
-    Klasyczny pomiar – pojedynczy sweep + cisza na ogon IR.
-    Zachowanie jak dotychczas.
-    """
+def playrec_sweep(sweep, fs, audio_cfg, extra_silence=5.0):
+
     silence = np.zeros(int(fs * extra_silence), dtype=np.float32)
     play_sig = np.concatenate([sweep, silence]).astype(np.float32)
     return _play_record(play_sig, fs, audio_cfg)
 
 
-def playrec_sweeps_concat(sweep, fs, audio_cfg, repeats, extra_silence=1.0):
-    """
-    Odtwarza kilka sweepów sklejonych PRÓBKA DO PRÓBKI oraz końcową ciszę.
+def playrec_sweeps_concat(sweep, fs, audio_cfg, repeats, extra_silence=5.0):
 
-    repeats – liczba sweepów w szeregu (np. averages + 1)
-    extra_silence – cisza po OSTATNIM sweepie (żeby złapać ogon IR ostatniego).
-    """
     sweep = np.asarray(sweep, dtype=np.float32)
     concat = np.tile(sweep, repeats).astype(np.float32)
 
@@ -151,17 +154,15 @@ def playrec_sweeps_concat(sweep, fs, audio_cfg, repeats, extra_silence=1.0):
 
 
 def deconvolve_full(recorded, inverse_filter):
-    """
-    Dekonwolucja całego nagrania (bez przycinania i bez wyrównywania piku).
-    Używana do przypadku wielu sklejonych sweepów, aby otrzymać
-    ciąg IR-ów rozdzielonych w czasie.
-    """
+
     recorded = np.asarray(recorded, dtype=np.float32)
     inverse_filter = np.asarray(inverse_filter, dtype=np.float32)
 
+    recorded = recorded - np.mean(recorded)
+
     n_conv = len(recorded) + len(inverse_filter) - 1
 
-    # najbliższa potęga 2 do FFT
+    # najbliższa potęga 2 do FFT (wydajność)
     nfft = 1
     while nfft < n_conv:
         nfft *= 2
@@ -170,79 +171,75 @@ def deconvolve_full(recorded, inverse_filter):
     I = np.fft.rfft(inverse_filter, nfft)
     ir_full = np.fft.irfft(R * I, nfft)
 
-    return ir_full.astype(np.float32)
+    # ważne: obcięcie do długości splotu liniowego
+    return ir_full[:n_conv].astype(np.float32)
 
 
-
-def deconvolve_ir(recorded, inverse_filter, fs, ir_length_s):
+def _extract_segment_from_peak(ir_full, fs, length_s, pre_ms=50):
     """
-    Dekonwolucja (ESS * inverse filter) → IR.
-    Przycinamy do ir_length_s
+    Wyciąga fragment IR zaczynając pre_ms przed maksimum amplitudy.
 
-    Uwaga: TA FUNKCJA NIE NORMALIZUJE już IR.
-    Normalizacja jest wykonywana na wyższym poziomie (w measure_ir),
-    aby dla stereo móc zastosować wspólny współczynnik dla L/R.
-    """
-    recorded = np.asarray(recorded, dtype=np.float32)
-    inverse_filter = np.asarray(inverse_filter, dtype=np.float32)
-
-    n_conv = len(recorded) + len(inverse_filter) - 1
-
-    # najbliższa potęga 2 do FFT
-    nfft = 1
-    while nfft < n_conv:
-        nfft *= 2
-
-    R = np.fft.rfft(recorded, nfft)
-    I = np.fft.rfft(inverse_filter, nfft)
-    ir_full = np.fft.irfft(R * I, nfft)
-
-    ir_samples = int(ir_length_s * fs)
-    ir = ir_full[:ir_samples]
-
-    # 1. Przesunięcie impulsu do t=0 (direct sound)
-    peak = np.argmax(np.abs(ir))
-    ir = np.roll(ir, -peak)
-
-
-    return ir.astype(np.float32)
-
-
-def trim_ir(ir, fs, pre_ms=50, post_ms=300, tail_drop_db=60):
-    """
-    Automatyczne przycinanie IR:
-      - pre_ms: ile ms zostawić PRZED głównym pikiem
-      - post_ms: ile ms zostawić PO końcu ogona (wykrytego po spadku tail_drop_db)
+    pre_ms = 50 ms:
+    - fizycznie poprawne dla niskich częstotliwości (~100 Hz),
+    - zapobiega obcinaniu pierwszej półfali LF,
+    - eliminuje sztuczne oscylacje w IR.
     """
 
-    ir = np.asarray(ir)
-    n = len(ir)
+    ir_full = np.asarray(ir_full, dtype=np.float32)
 
-    # 1) znajdź pik (direct sound)
-    peak_idx = np.argmax(np.abs(ir))
+    peak = int(np.argmax(np.abs(ir_full)))
+    pre_samples = int((pre_ms / 1000.0) * fs)
 
-    # przelicz ms na próbki
-    pre_samp = int((pre_ms / 1000) * fs)
-    post_samp = int((post_ms / 1000) * fs)
+    start = max(0, peak - pre_samples)
+    seg_len = int(length_s * fs)
+    end = start + seg_len
 
-    # 2) początek IR = 50 ms przed pikiem
-    start = max(0, peak_idx - pre_samp)
+    if end <= len(ir_full):
+        return ir_full[start:end]
 
-    # 3) znajdź punkt w którym IR spadło np. o 60 dB
-    peak_val = np.max(np.abs(ir))
-    threshold = peak_val * 10**(-tail_drop_db / 20)
+    # jeśli brakuje próbek – dopełnij zerami
+    out = np.zeros(seg_len, dtype=np.float32)
+    available = len(ir_full) - start
+    if available > 0:
+        out[:available] = ir_full[start:]
+    return out
 
-    # idziemy od końca aż IR > próg
-    end_idx = n - 1
-    for i in range(n - 1, peak_idx, -1):
-        if abs(ir[i]) > threshold:
-            end_idx = i
-            break
 
-    # 4) koniec IR = 300 ms po końcu ogona
-    end = min(n, end_idx + post_samp)
+def _extract_segment_from_index(x, start_idx, fs, length_s, pre_ms=50):
+    """
+    Wyciąga fragment IR zaczynając pre_ms przed zadanym indeksem.
+    Używane do stereo alignment i averaging.
 
-    return ir[start:end]
+    pre_ms = 50 ms:
+    - spójne z _extract_segment_from_peak
+    - fizycznie poprawne dla LF
+    """
+
+    x = np.asarray(x, dtype=np.float32)
+
+    pre_samples = int((pre_ms / 1000.0) * fs)
+    start = int(max(0, start_idx - pre_samples))
+
+    seg_len = int(length_s * fs)
+    end = start + seg_len
+
+    if end <= len(x):
+        return x[start:end]
+
+    # jeśli brakuje próbek – dopełnij zerami
+    out = np.zeros(seg_len, dtype=np.float32)
+    available = len(x) - start
+    if available > 0:
+        out[:available] = x[start:]
+    return out
+
+
+
+
+def _normalize_signal(x):
+    x = np.asarray(x, dtype=np.float32)
+    return (x / (np.max(np.abs(x)) + 1e-12)).astype(np.float32)
+
 
 
 
@@ -282,7 +279,7 @@ def measure_ir(params, audio_cfg):
           "output_device":   int,
           "sample_rate":     int,
           "buffer_size":     int,
-          "input_channels":  int (opcjonalne; domyślnie 1)
+          "input_channels":  int (opcjonalne, ale domyślnie 1)
         }
 
     Zwraca:
@@ -296,9 +293,8 @@ def measure_ir(params, audio_cfg):
     channels_in = int(audio_cfg.get("input_channels", 1))
     mode = params.get("mode", "single")
 
-    # -------------------------
-    # 1) Generacja sweepa i inverse filter
-    # -------------------------
+
+    # Generacja sweepa i inverse filter
     sweep = generate_exponential_sweep(
         fs,
         params["sweep_length"],
@@ -319,15 +315,11 @@ def measure_ir(params, audio_cfg):
     ir_block_samp = int(ir_length_s * fs)
     avg_count = max(1, int(params.get("averages", 1)))
 
-    # ------------------------
-    # TRYB SINGLE
-    # ------------------------
+    # Pojedyńczy pomiar - sanity check
     if mode == "single":
         avg_count = 1  # zawsze 1
 
-    # ------------------------
-    # TRYB AVERAGING FARINA
-    # ------------------------
+    # Uśredniony pomiar - sanity check
     elif mode == "average":
         # IR length musi być równe sweep length
         ir_length_s = sweep_len_s
@@ -336,9 +328,8 @@ def measure_ir(params, audio_cfg):
         # Averaging musi być >= 2
         avg_count = max(2, avg_count)
 
-    # --------------------------------------------------
-    # PRZYPADEK 1: BEZ UŚREDNIANIA
-    # --------------------------------------------------
+
+    # Pojedyńczy pomiar worker
     if avg_count == 1:
         recorded = playrec_sweep(
             sweep,
@@ -351,10 +342,9 @@ def measure_ir(params, audio_cfg):
         if channels_in == 1 or (np.ndim(recorded) == 1):
             rec_mono = recorded[:, 0] if np.ndim(recorded) > 1 else recorded
 
-            ir = deconvolve_ir(rec_mono, inv, fs, ir_length_s)
-
-            # normalizacja
-            ir /= (np.max(np.abs(ir)) + 1e-12)
+            ir_full = deconvolve_full(rec_mono, inv)
+            ir = _extract_segment_from_peak(ir_full, fs, ir_length_s)
+            ir = _normalize_signal(ir)
 
             freqs, mag_db = compute_mag_response(ir, fs)
             return ir.astype(np.float32), freqs, mag_db, rec_mono
@@ -364,19 +354,35 @@ def measure_ir(params, audio_cfg):
         if rec_arr.ndim == 1:
             rec_arr = rec_arr.reshape(-1, 1)
 
-        ir_list = []
+        # Dekonwolucja pełna dla każdego kanału
+        ir_full_list = []
         for ch in range(rec_arr.shape[1]):
-            ir_ch = deconvolve_ir(rec_arr[:, ch], inv, fs, ir_length_s)
+            ir_full_ch = deconvolve_full(rec_arr[:, ch], inv)
+            ir_full_list.append(ir_full_ch)
+
+        # znalezienie peak w każdym kanale
+        peaks = [int(np.argmax(np.abs(ir))) for ir in ir_full_list]
+
+        # wybór najwcześniejszego peaku (minimum indeksu)
+        peak0 = min(peaks)
+
+        # Wycięcie tego samego okna z każdego kanału
+        ir_list = []
+        for ch in range(len(ir_full_list)):
+            ir_ch = _extract_segment_from_index(ir_full_list[ch], peak0, fs, ir_length_s)
             ir_list.append(ir_ch)
 
-        min_len = min(len(x) for x in ir_list)
-        ir_array = np.stack([x[:min_len] for x in ir_list], axis=1)
+        # Złóż kanały do wspólnej długości (wydłuża uzupełniając zerami)
+        max_len = max(map(len, ir_list))
+        ir_array = np.stack(
+            [np.pad(x, (0, max_len - len(x))) for x in ir_list],
+            axis=1
+        )
 
-        # pojedyncze wyrównanie i normalizacja
-        peak = int(np.argmax(np.abs(ir_array[:, 0])))
-        ir_array = np.roll(ir_array, -peak, axis=0)
-        ir_array /= (np.max(np.abs(ir_array)) + 1e-12)
+        # Normalizacja wspólnym współczynnikiem (zachowuje relacje L/R)
+        ir_array = ir_array / (np.max(np.abs(ir_array)) + 1e-12)
 
+        # magnitude
         freqs, mag0 = compute_mag_response(ir_array[:, 0], fs)
         mag_db = np.zeros((len(freqs), ir_array.shape[1]), dtype=np.float32)
         mag_db[:, 0] = mag0
@@ -385,17 +391,13 @@ def measure_ir(params, audio_cfg):
 
         return ir_array.astype(np.float32), freqs, mag_db, rec_arr
 
-    # --------------------------------------------------
-    # PRZYPADEK 2: UŚREDNIANIE (avg_count > 1)
-    # METODA FARINY – DEKONWOLUCJA CAŁEGO NAGRANIA
-    # --------------------------------------------------
-
+    # Uśredniony pomiar - worker
     if mode == "average":
         ir_block_samp = sweep_samp
     else:
         ir_block_samp = int(ir_length_s * fs)
 
-    repeats = avg_count + 1   # pierwsze IR wyrzucamy
+    repeats = avg_count + 1   # Powtórzeń o jeden więcej bo pierwsze niekompletne okienko wyrzucamy
 
     recorded_full = playrec_sweeps_concat(
         sweep,
@@ -417,30 +419,25 @@ def measure_ir(params, audio_cfg):
         max_blocks = (n_total - ir_block_samp) // sweep_samp
         num_blocks = min(max_blocks, repeats)
 
+        #Wycinanie okien i uśrednianie
         ir_blocks = []
-
-        # wycinanie IR-ów BEZ przesuwania
         for k in range(1, num_blocks):
             start = k * sweep_samp
             end = start + ir_block_samp
             if end > n_total:
                 break
-            seg = ir_full[start:end].astype(np.float32)
-            ir_blocks.append(seg)
+            ir_blocks.append(ir_full[start:end].astype(np.float32))
 
         if not ir_blocks:
-            ir = deconvolve_ir(rec_mono, inv, fs, ir_length_s)
+            # fallback: wyciągnij pojedynczą IR z całego przebiegu
+            ir = _extract_segment_from_peak(ir_full, fs, ir_length_s)
         else:
-            min_len = min(len(x) for x in ir_blocks)
-            ir_stack = np.stack([x[:min_len] for x in ir_blocks], axis=0)
+            ir_stack = np.stack(ir_blocks, axis=0)
             ir = ir_stack.mean(axis=0).astype(np.float32)
 
-        # jedno wyrównanie finalnej IR
-        peak = int(np.argmax(np.abs(ir)))
-        ir = np.roll(ir, -peak)
-
-        # normalizacja
-        ir /= (np.max(np.abs(ir)) + 1e-12)
+        #Wycinanie okna od peaku
+        ir = _extract_segment_from_peak(ir, fs, ir_length_s)
+        ir = _normalize_signal(ir)
 
         freqs, mag_db = compute_mag_response(ir, fs)
         return ir.astype(np.float32), freqs, mag_db, rec_mono
@@ -462,33 +459,41 @@ def measure_ir(params, audio_cfg):
         num_blocks = min(max_blocks, repeats)
 
         blocks = []
-
         for k in range(1, num_blocks):
             start = k * sweep_samp
             end = start + ir_block_samp
             if end > n_total:
                 break
-
-            seg = ir_full_ch[start:end].astype(np.float32)
-            blocks.append(seg)
+            blocks.append(ir_full_ch[start:end].astype(np.float32))
 
         if not blocks:
-            ir_ch = deconvolve_ir(rec_ch, inv, fs, ir_length_s)
+            # fallback: wyciągnij pojedynczą IR z całego przebiegu
+            ir_ch = _extract_segment_from_peak(ir_full_ch, fs, ir_length_s)
         else:
-            min_len_ch = min(len(x) for x in blocks)
-            stack_ch = np.stack([x[:min_len_ch] for x in blocks], axis=0)
+            stack_ch = np.stack(blocks, axis=0)
             ir_ch = stack_ch.mean(axis=0).astype(np.float32)
 
         ir_channels.append(ir_ch)
 
-    # wyrównanie finalne do piku pierwszego kanału
-    min_len = min(len(x) for x in ir_channels)
-    ir_array = np.stack([x[:min_len] for x in ir_channels], axis=1)
+    # Wydłuża kanały do wspólnej długości (wydłuża uzupełniając zerami)
+    max_len = max(map(len, ir_channels))
+    ir_array = np.stack(
+        [np.pad(x, (0, max_len - len(x))) for x in ir_channels],
+        axis=1
+    )
 
-    peak = int(np.argmax(np.abs(ir_array[:, 0])))
-    ir_array = np.roll(ir_array, -peak, axis=0)
+    # znalezienie peak w każdym kanale
+    peaks = [int(np.argmax(np.abs(ir))) for ir in ir_array]
 
-    ir_array /= (np.max(np.abs(ir_array)) + 1e-12)
+    # wybór najwcześniejszego peaku (minimum indeksu)
+    peak0 = min(peaks)
+
+    ir_list = []
+    for ch in range(n_ch):
+        ir_list.append(_extract_segment_from_index(ir_array[:, ch], peak0, fs, ir_length_s))
+
+    # Normalizacja wspólnym współczynnikiem
+    ir_array = ir_array / (np.max(np.abs(ir_array)) + 1e-12)
 
     # magnitude
     freqs, mag0 = compute_mag_response(ir_array[:, 0], fs)
@@ -501,49 +506,88 @@ def measure_ir(params, audio_cfg):
     return ir_array.astype(np.float32), freqs, mag_db, rec_arr
 
 
-
 def smooth_mag_response(freqs, mag_db, fraction=6):
     """
-    Fractional-octave smoothing – szybka implementacja O(N)
-    z oknem szerokości 1/fraction oktawy w skali log2(f).
+    - uśrednianie mocy (power mean)
+
     """
+
+    # Konwersja wejść do tablic
     freqs = np.asarray(freqs)
     mag_db = np.asarray(mag_db)
+
+    # Tablica wyjściowa – ten sam kształt co mag_db
     smoothed = np.empty_like(mag_db)
 
+    # Liczba punktów charakterystyki
     n = len(freqs)
     if n == 0:
+        # Brak danych
         return smoothed
 
-    # logarytm częstotliwości (log2, bo wygodnie w oktawach)
+    # Logarytm częstotliwości w podstawie 2:
+    # +1 w log2 = wzrost o jedną oktawę
     logf = np.log2(np.maximum(freqs, 1e-12))
-    half = 1.0 / (2.0 * fraction)  # połowa szerokości okna w oktawach
 
+    # Połowa szerokości okna wygładzania w oktawach
+    # Całe okno ma szerokość 1/fraction oktawy
+    half = 1.0 / (2.0 * fraction)
+
+    # Wskaźniki lewego i prawego brzegu okna
+    # Dzięki temu nie liczymy zakresu od nowa dla każdego punktu
     left = 0
     right = 0
 
+    # Iteracja po wszystkich punktach charakterystyki
     for i in range(n):
         f = freqs[i]
+
+        # Punkt 0 Hz (DC) – brak sensownego okna oktawowego
+        # Przepisujemy wartość bez wygładzania
         if f <= 0:
             smoothed[i] = mag_db[i]
             continue
 
+        # Pozycja bieżącej częstotliwości w skali log2
         center = logf[i]
+
+        # Dolna i górna granica okna wygładzania
         low = center - half
         high = center + half
 
-        # przesuwamy lewy wskaźnik, aż wejdziemy w okno
+        # Przesuwanie lewego wskaźnika:
+        # pomijamy częstotliwości poniżej dolnej granicy okna
         while left < n and logf[left] < low:
             left += 1
-        # przesuwamy prawy wskaźnik, dopóki jesteśmy w oknie
+
+        # Przesuwanie prawego wskaźnika:
+        # włączamy częstotliwości aż do górnej granicy okna
         while right < n and logf[right] <= high:
             right += 1
 
+        # Jeśli okno zawiera co najmniej jeden punkt
         if right > left:
+
+            # # Konwersja dB → amplituda liniowa
+            # lin = 10.0 ** (mag_db[left:right] / 20.0)
+            #
+            # # Moc to amplituda^2
+            # power = lin ** 2
+            #
+            # # Średnia mocy w oknie oktawowym
+            # mean_power = power.mean()
+            #
+            # # Powrót do skali dB
+            # smoothed[i] = 10.0 * np.log10(mean_power + 1e-30)
+
             smoothed[i] = mag_db[left:right].mean()
+
         else:
+            # Gdyby okno było puste
             smoothed[i] = mag_db[i]
 
+    # Zwrócenie wygładzonej charakterystyki
     return smoothed
+
 
 

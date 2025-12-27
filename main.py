@@ -1796,7 +1796,7 @@ class MeasurementPage(ctk.CTkFrame):
         except Exception:
             pass
 
-        self.canvas.draw()
+        self.canvas.draw_idle()
 
     def _on_channel_change(self, value: str):
         """Obsługa przełączania kanału L/R na wykresach."""
@@ -1905,7 +1905,7 @@ class MeasurementPage(ctk.CTkFrame):
             show_error("Błędne parametry pomiaru.\nSprawdź, czy wszystkie pola są liczbami.")
             return
 
-        # Po parsowaniu sweep_len, start_f, end_f, ir_len, fade, avg_count
+        # Po parsowaniu parametrów ewentualna poprawa złych pól
 
         if start_f <= 0:
             show_error("Start freq musi być > 0 Hz.")
@@ -1919,7 +1919,7 @@ class MeasurementPage(ctk.CTkFrame):
         # Zabezpieczenie: IR nie krótsza niż sweep
         if ir_len < sweep_len:
             ir_len = sweep_len
-            # poprawiamy wartość w polu tekstowym, żeby user widział co się stało
+            # podmiana wartości w polu tekstowym
             self.ir_length.delete(0, "end")
             self.ir_length.insert(0, str(sweep_len))
             self.status_label.configure(
@@ -1927,7 +1927,7 @@ class MeasurementPage(ctk.CTkFrame):
             )
 
         # Zabezpieczenie teoretyczne: przy averages > 1
-        # IR nie może być dłuższa niż sweep (inaczej aliasing ogona IR)
+        # IR nie może być dłuższa niż sweep (aliasing ogona IR)
         if avg_count > 1 and ir_len > sweep_len:
             ir_len = sweep_len
             self.ir_length.delete(0, "end")
@@ -1942,13 +1942,13 @@ class MeasurementPage(ctk.CTkFrame):
             show_error("End freq musi być większe niż Start freq.")
             return
 
-        # 2. Folder wyjściowy
+        # Folder wyjściowy
         output_dir = self.output_dir_var.get()
         if not os.path.isdir(output_dir):
             show_error("Wybrany folder zapisu IR nie istnieje.")
             return
 
-        # 3. Konfiguracja audio z SettingsPage
+        # Konfiguracja audio z SettingsPage
         audio_cfg = self.controller.get_measurement_audio_config()
         if audio_cfg is None:
             show_error("Najpierw skonfiguruj poprawnie urządzenia audio w zakładce 'Ustawienia'.")
@@ -2071,10 +2071,10 @@ class MeasurementPage(ctk.CTkFrame):
 
             # 1) najpierw auto-ustaw Y dla Magnitude
             self.after(0, self._auto_adjust_mag_ylim_after_measurement)
-
+            print("test v1")
             # 2) potem dopiero rysuj wykresy już z nowymi limitami
             self.after(0, self.update_plots)
-
+            print("test v2")
             self.after(
                 0,
                 lambda: self.status_label.configure(

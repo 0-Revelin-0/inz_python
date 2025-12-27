@@ -2,11 +2,8 @@ import numpy as np
 import sounddevice as sd
 
 
-# =============================================================
-# 1. GENERACJA RÓŻOWEGO SZUMU (Pink Noise)
-# =============================================================
 
-def generate_pink_noise(duration, fs, level_db=-3):
+def generate_pink_noise(duration, fs, level_db=-1):
     """
     Generacja różowego szumu metodą filtracji białego szumu
     przez filtr 1/f.
