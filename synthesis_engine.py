@@ -7,29 +7,7 @@ CENTER_FREQS = np.array(
 
 
 def compute_room_and_t60(room_dims, alpha_walls, alpha_ceiling, alpha_floor):
-    """
-    Liczy parametry geometryczne + T60 w pasmach oktawowych metodą Sabine'a.
-    T60 zawsze pochodzi z pochłaniania (brak trybu manualnego).
 
-    Parameters
-    ----------
-    room_dims : tuple(float, float, float)
-        (W, L, H) w metrach.
-    alpha_walls, alpha_ceiling, alpha_floor : array-like shape (N,)
-        Współczynniki pochłaniania dla pasm oktawowych.
-        N powinno być równe len(CENTER_FREQS) = 8.
-
-    Returns
-    -------
-    alpha_mean : np.ndarray shape (N,)
-        Średni współczynnik pochłaniania w pasmach.
-    t60_bands : np.ndarray shape (N,)
-        Czas pogłosu T60 w pasmach.
-    mfp : float
-        Mean free path [m].
-    geom : dict
-        V, S_su, S_po, S_sc, S.
-    """
     W, L, H = room_dims
     W = float(W)
     L = float(L)
@@ -37,16 +15,17 @@ def compute_room_and_t60(room_dims, alpha_walls, alpha_ceiling, alpha_floor):
 
     # Geometria
     V = W * L * H
-    S_su = W * L                   # sufit
-    S_po = W * L                   # podłoga
-    S_sc = 2.0 * (W * H + L * H)   # wszystkie ściany
+    S_su = W * L                   # powierzchnia sufitu
+    S_po = W * L                   # powierzchnia podłogi
+    S_sc = 2.0 * (W * H + L * H)   # powierzchnia wszystkich ściany
     S = S_su + S_po + S_sc
 
+    # Konwersja list współczynników pochłaniania na tablice
     alpha_walls = np.asarray(alpha_walls, dtype=float)
     alpha_ceiling = np.asarray(alpha_ceiling, dtype=float)
     alpha_floor = np.asarray(alpha_floor, dtype=float)
 
-    # Zakładamy, że wszystkie trzy mają tę samą długość
+    # Zakładamy, że wszystkie trzy mają tę samą długość, czyli 8 pasm
     n_bands = len(alpha_walls)
 
     if not (len(alpha_ceiling) == n_bands == len(alpha_floor)):
@@ -55,27 +34,28 @@ def compute_room_and_t60(room_dims, alpha_walls, alpha_ceiling, alpha_floor):
             f"walls={len(alpha_walls)}, ceil={len(alpha_ceiling)}, floor={len(alpha_floor)}"
         )
 
-    alpha_mean = np.zeros(n_bands, dtype=float)
-    t60_bands = np.zeros(n_bands, dtype=float)
+    alpha_mean = np.zeros(n_bands, dtype=float) # tablica średnich współczynników pochłaniania dla każdego pasma
+    t60_bands = np.zeros(n_bands, dtype=float)  # tablica czasów pogłosu T60 dla każdego pasma
 
+    #Pochłananie powierzchni w pasmach i czyli alfa * powierzchnia
     for i in range(n_bands):
         A_su = alpha_ceiling[i] * S_su
         A_po = alpha_floor[i] * S_po
         A_sc = alpha_walls[i] * S_sc
-        A = A_su + A_po + A_sc
+        A = A_su + A_po + A_sc   # Całkowita powierzchnia pochłaniająca w paśmie i
 
         if A <= 1e-6 or S <= 0:
             alpha_mean[i] = 0.0
-            t60_bands[i] = 0.5  # sensowna wartość domyślna, gdy prawie brak pochłaniania
+            t60_bands[i] = 3   # Domyślna wartość T60 = 3 s, gdy brak pochłaniania (ograniczenie przed nieskończonym T60)
         else:
-            alpha_mean[i] = A / S
-            t60_bands[i] = 0.161 * V / A  # Sabine
+            alpha_mean[i] = A / S       # Średni współczynnik pochłaniania w paśmie i (alpha_mean = A / S)
+            t60_bands[i] = 0.161 * V / A  # Czas pogłosu T60 w paśmie i wg wzoru Sabine'a
 
-    # Mean free path
+    # # Mean free path (średnia droga swobodna dźwięku między odbiciami)
     if S <= 0:
         mfp = 1.0
     else:
-        mfp = 4.0 * V / S
+        mfp = 4.0 * V / S # Średnia droga swobodna [m] (lambda = 4V/S dla pomieszczenia zamkniętego)
 
     geom = {
         "V": V,
@@ -101,26 +81,27 @@ def _design_fir_bandpass(fs, f_center, num_taps=513):
     f1 = f_center / np.sqrt(2.0)
     f2 = f_center * np.sqrt(2.0)
 
+    #Zabezpieczenie przed za wysoką i za niską częstotliwością
     nyq = fs / 2.0
     f2 = min(f2, 0.99 * nyq)
-    f1 = max(f1, 1.0)  # nie schodzimy do DC
+    f1 = max(f1, 1.0)  # nie schodzimy do 0 Hz
 
     n = np.arange(num_taps) - (num_taps // 2)
 
     def h_lp(fc):
         x = 2.0 * fc / fs * n
-        return 2.0 * fc / fs * np.sinc(x)  # numpy.sinc: sin(pi x)/(pi x)
+        return 2.0 * fc / fs * np.sinc(x)  # Impuls h dla filtru dolnoprzepustowego o częstotliwości odcięcia fc (idealny sinc)
 
-    h2 = h_lp(f2)
-    h1 = h_lp(f1)
+    h2 = h_lp(f2)   # współczynniki idealnego filtru dolnoprzepustowego o odcięciu f2
+    h1 = h_lp(f1)   # współczynniki idealnego filtru dolnoprzepustowego o odcięciu f1
 
-    h = h2 - h1
+    h = h2 - h1     # odejmując dwa filtry dolnoprzepustowe, otrzymujemy filtr pasmowy (przepuszcza zakres [f1, f2])
 
     # Okno Hamminga
     window = 0.54 - 0.46 * np.cos(2.0 * np.pi * (np.arange(num_taps)) / (num_taps - 1))
-    h *= window
+    h *= window     # aplikacja okna do impulsu filtra (wygładzenie odpowiedzi, redukcja efektów sinc-a)
 
-    # Normalizacja energii
+    # # Normalizacja energii (skalowanie sumy modułów impulsu do 1)
     norm = np.sum(np.abs(h))
     if norm > 0:
         h /= norm
@@ -132,13 +113,13 @@ def generate_late_reverb(fs, duration_s, t60_bands, mfp):
     """
     Generuje późny pogłos:
       - biały szum
-      - filtracja w 6 pasmach oktawowych
+      - filtracja w 8 pasmach oktawowych
       - obwiednia 10^(-3 * t / T60) w każdym paśmie
-      - fade-in na początku zależny od mean free path (jak w MATLAB-ie).
+      - fade-in na początku zależny od mean free path.
     """
     fs = int(fs)
-    n_samples = int(fs * duration_s) + 1
-    t = np.linspace(0.0, duration_s, n_samples, endpoint=True)
+    n_samples = int(fs * duration_s) + 1     # liczba próbek odpowiadająca czasowi trwania (zaokrąglamy w górę +1)
+    t = np.linspace(0.0, duration_s, n_samples, endpoint=True)  # oś czasu od 0 do duration_s (w sekundach)
 
     # Biały szum (Gaussowski)
     white = np.random.normal(0.0, 1.0, size=n_samples).astype(np.float32)
@@ -147,40 +128,40 @@ def generate_late_reverb(fs, duration_s, t60_bands, mfp):
     num_taps = 513
     band_signals = []
 
-    for f0 in CENTER_FREQS:
-        h = _design_fir_bandpass(fs, f0, num_taps=num_taps)
-        band = np.convolve(white, h, mode="same")
+    for f0 in CENTER_FREQS: #Dla każdego filtra w liście częstotliwości środkowych
+        h = _design_fir_bandpass(fs, f0, num_taps=num_taps) # zaprojektuj filtr band dla tej oktawy
+        band = np.convolve(white, h, mode="same")      # przefiltruj biały szum tym filtrem (szum ograniczony do pasma tej oktawy)
         band_signals.append(band)
 
-    band_signals = np.stack(band_signals, axis=0)  # [6, n_samples]
+    band_signals = np.stack(band_signals, axis=0)  # łączy listę sygnałów w macierz [8 x n_samples]
 
     # Obwiednie w pasmach
     t60_bands = np.asarray(t60_bands, dtype=float)
-    t60_bands = np.maximum(t60_bands, 0.05)  # minimalnie 50 ms
+    t60_bands = np.maximum(t60_bands, 0.05)  # ograniczenie, że minimalny T60 = 0.05 s dla każdego pasma
 
     # Sprawdzenie zgodności liczby pasm T60 z bankiem filtrów
     if t60_bands.shape[0] != CENTER_FREQS.shape[0]:
         raise ValueError(
             f"t60_bands ma {t60_bands.shape[0]} pasm, a CENTER_FREQS {CENTER_FREQS.shape[0]}.\n"
-            "Upewnij się, że w GUI masz tyle samo pasm pochłaniania, co w CENTER_FREQS."
+            "W GUI nie ma tyle samo pasm pochłaniania, co w CENTER_FREQS."
         )
 
-
+    # env to macierz, gdzie każdy wiersz to obwiednia eksp. 10^(-3 t / T60_i) dla pasma i
     env = 10.0 ** (-3.0 * t[np.newaxis, :] / t60_bands[:, np.newaxis])
 
     # Zastosowanie obwiedni i suma pasm
     shaped = band_signals * env
     nL = np.sum(shaped, axis=0)
 
-    # Fade-in zgodny z MATLAB: t_fade = 2*mfp/343
-    t_fade = 2.0 * mfp / SPEED_OF_SOUND
-    fade_len = int(t_fade * fs)
+    # Fade-in pogłosu
+    t_fade = 2.0 * mfp / SPEED_OF_SOUND # czas trwania fade-in [s], proporcjonalny do podwójnej średniej drogi swobodnej
+    fade_len = int(t_fade * fs) # liczba próbek fade-in
 
     if fade_len > 1 and fade_len < n_samples:
         fade = np.linspace(0.0, 1.0, fade_len)
         mask = np.ones_like(nL)
         mask[:fade_len] = fade
-        nL *= mask
+        nL *= mask  # zastosowanie maski: początkowe próbki są skalowane od 0 do 1 (reszta *1)
 
     return nL.astype(np.float32)
 
@@ -194,24 +175,8 @@ def generate_early_reflections(fs, duration_s,
                                mfp_dev_percent,
                                rng=None):
     """
-    Implementacja FDN (wczesnych odbić) na podstawie FDN.m z MATLAB-a.
+    Implementacja FDN (wczesnych odbić)
 
-    Parameters
-    ----------
-    fs : int
-    duration_s : float
-    alpha_for_fdn : float
-        Średni współczynnik pochłaniania (zwykle z pasma 1 kHz).
-    mfp : float
-        Mean free path [m]
-    reflections_no : int
-        Ilość odbić w jednej linii.
-    rays_no : int
-        Ilość linii (promieni).
-    first_refl_percent : float
-        Rozrzut pierwszego odbicia wyrażony w % mfp.
-    mfp_dev_percent : float
-        Rozrzut mean free path w % mfp.
     """
     fs = int(fs)
     n_samples = int(fs * duration_s) + 1
@@ -220,14 +185,16 @@ def generate_early_reflections(fs, duration_s,
         rng = np.random.default_rng()
 
     # Parametry odległości w metrach
-    first_refl_dist = 0.5 * mfp
-    first_refl_dev = (first_refl_percent / 100.0) * mfp
+    first_refl_dist = 0.5 * mfp  # dystans pierwszego odbicia
+    first_refl_dev = (first_refl_percent / 100.0) * mfp # odchylenie std pierwszego odbicia (procent mfp)
     mean_free_path = mfp
-    mean_free_path_dev = (mfp_dev_percent / 100.0) * mfp
+    mean_free_path_dev = (mfp_dev_percent / 100.0) * mfp # odchylenie std kolejnych odcinków drogi (procent mfp)
 
+    # Zamiana odległości [m] na liczbę próbek
     def dist_to_samples(dist_m):
         return int(np.floor((dist_m / SPEED_OF_SOUND) * fs))
 
+    # Powyżej wyliczamy odpowiadające parametry w próbkach
     first_refl_samples = max(1, dist_to_samples(first_refl_dist))
     first_refl_dev_samples = max(0, dist_to_samples(first_refl_dev))
     mfp_samples = max(1, dist_to_samples(mean_free_path))
@@ -236,12 +203,13 @@ def generate_early_reflections(fs, duration_s,
     nE = np.zeros(n_samples, dtype=np.float32)
 
     alpha = float(alpha_for_fdn)
-    alpha_dev = alpha / 2.0
+    alpha_dev = alpha / 2.0 # Odchylenie standardowe dla losowej absorpcji = połowa wartości średniej
 
     for _ in range(int(rays_no)):
-        a = float(rng.normal(alpha, alpha_dev))
-        a = float(np.clip(a, 0.0, 0.99))
+        a = float(rng.normal(alpha, alpha_dev)) # losowy współczynnik absorpcji dla tego promienia (normalnie wokół alpha)
+        a = float(np.clip(a, 0.0, 0.99))    # ograniczenie od 0 do 0,99
 
+        # losowe opóźnienie pierwszego odbicia
         r_first = int(np.floor(rng.normal(first_refl_samples, first_refl_dev_samples)))
         if r_first < 1:
             r_first = 1
@@ -250,48 +218,44 @@ def generate_early_reflections(fs, duration_s,
         M = np.zeros(int(reflections_no), dtype=np.int64)
 
         M[0] = r_first
-        k[0] = 2.0 * (1.0 - a)
+        k[0] = (1.0 - a)  # amplituda pierwszego odbicia to współczynnik odbicia
 
         for i in range(1, int(reflections_no)):
-            r = int(np.floor(rng.normal(mfp_samples, mfp_dev_samples)))
+            r = int(np.floor(rng.normal(mfp_samples, mfp_dev_samples))) # długość kolejnej drogi w próbkach, losowana wokół mfp
             if r < 1:
                 r = 1
+            # losowy współczynnik pochłaniania przy tym odbiciu
             a = float(rng.normal(alpha, alpha_dev))
-            a = float(np.clip(a, 0.0, 0.99))
-            k[i] = k[i - 1] * (1.0 - a)
-            M[i] = M[i - 1] + r
+            a = float(np.clip(a, 0.0, 0.99)) # ograniczenie od 0 do 0,99
 
-        # Zabezpieczenie indeksów + sumowanie amplitud (bardziej fizyczne niż nadpisywanie)
-        valid = (M >= 0) & (M < n_samples)
-        nE[M[valid]] += k[valid]
+            k[i] = k[i - 1] * (1.0 - a) # amplituda kolejnego odbicia = poprzednia amplituda * współczynnik odbicia
+            M[i] = M[i - 1] + r  # czas w próbkach kolejnego odbicia, czyli poprzedni czas + czas kolejnej droga
+
+        # Dodanie wygenerowanej linii odbić do sumarycznego sygnału
+        valid = (M >= 0) & (M < n_samples)   # maska dla indeksów, które mieszczą się w długości sygnału
+        nE[M[valid]] += k[valid]    # sumujemy amplitudy odbić na tych pozycjach (zamiast nadpisywać)
 
     return nE
 
 
 def generate_synthetic_ir_from_config(config, early_fraction, ir_duration_s, rng=None):
     """
-    Główna funkcja silnika – odpowiednik skryptu MATLAB, ale:
-      - długość IR ustala GUI (ir_duration_s),
-      - T60 zawsze liczone z Sabine'a (brak trybu manualnego),
-      - HRTF nie jest tu uwzględniane.
+    Główna funkcja silnika
 
     Parameters
-    ----------
+
     config : dict
-        Słownik z ustawieniami generowania:
-          - fs              : int
-          - room_dims       : (W, L, H)
-          - alpha_walls     : list(6)
-          - alpha_ceiling   : list(6)
-          - alpha_floor     : list(6)
-          - rays_no         : int
-          - reflections_no  : int
-          - first_dev_percent : float
-          - mfp_dev_percent   : float
-    early_fraction : float
-        Udział wczesnych odbić (0.0 .. 1.0).
-    ir_duration_s : float
-        Długość IR w sekundach.
+          - fs                  : int
+          - room_dims (W, L, H) : float
+          - alpha_walls         : list(8)
+          - alpha_ceiling       : list(8)
+          - alpha_floor         : list(8)
+          - rays_no             : int
+          - reflections_no      : int
+          - first_dev_percent   : float
+          - mfp_dev_percent     : float
+          - early_fraction      : float
+          - ir_duration_s       : float
     """
     if rng is None:
         rng = np.random.default_rng()
@@ -307,7 +271,7 @@ def generate_synthetic_ir_from_config(config, early_fraction, ir_duration_s, rng
     first_dev_percent = float(config.get("first_dev_percent", 20.0))
     mfp_dev_percent = float(config.get("mfp_dev_percent", 50.0))
 
-    # 1) Geometria, T60, mean free path – ZAWSZE Sabine
+    # 1) Geometria, T60, mean free path
     alpha_mean, t60_bands, mfp, geom = compute_room_and_t60(
         room_dims,
         alpha_walls,
@@ -318,10 +282,10 @@ def generate_synthetic_ir_from_config(config, early_fraction, ir_duration_s, rng
     # Do FDN używamy alfa z pasma 1 kHz (indeks 3)
     alpha_for_fdn = float(alpha_mean[3]) if alpha_mean.size >= 4 else float(alpha_mean.mean())
 
-    # 2) Późny pogłos
+    # Późny pogłos
     nL = generate_late_reverb(fs, ir_duration_s, t60_bands, mfp)
 
-    # 3) Wczesne odbicia
+    # Wczesne odbicia
     nE = generate_early_reflections(
         fs=fs,
         duration_s=ir_duration_s,
@@ -334,18 +298,18 @@ def generate_synthetic_ir_from_config(config, early_fraction, ir_duration_s, rng
         rng=rng,
     )
 
-    # 4) Dźwięk bezpośredni
+    # Dźwięk bezpośredni
     n_samples = len(nL)
     nD = np.zeros(n_samples, dtype=np.float32)
     nD[0] = 1.0
 
-    # 5) Mieszanie Early / Late
+    # Mieszanie Early / Late
     p = float(np.clip(early_fraction, 0.0, 1.0))
     ir = nD + p * nE + (1.0 - p) * nL
 
-    # 6) Normalizacja globalna
-    max_abs = float(np.max(np.abs(ir)))
-    if max_abs > 0:
-        ir = ir / max_abs
+    # # 6) Normalizacja globalna
+    # max_abs = float(np.max(np.abs(ir)))
+    # if max_abs > 0:
+    #     ir = ir / max_abs
 
     return ir.astype(np.float32), fs

@@ -2807,16 +2807,18 @@ class SettingsPage(ctk.CTkFrame):
         surfaces = ["Ściany", "Sufit", "Podłoga"]
 
         # Nagłówki kolumn
-        ctk.CTkLabel(abs_frame, text="Materiał").grid(row=0, column=0, padx=10)
+        ctk.CTkLabel(abs_frame, text="Powierzchnia").grid(row=0, column=0, padx=10, sticky="w")
+        ctk.CTkLabel(abs_frame, text="Materiał").grid(row=0, column=1, padx=10, sticky="w")
 
         for i, f in enumerate(freqs):
-            ctk.CTkLabel(abs_frame, text=f"{f} Hz").grid(row=0, column=i + 1, padx=10)
+            ctk.CTkLabel(abs_frame, text=f"{f} Hz").grid(row=0, column=i + 2, padx=10)
 
         self.abs_entries = {}
-
         self.material_combos = {}
 
         for r, surf in enumerate(surfaces):
+            # --- Etykieta powierzchni ---
+            ctk.CTkLabel(abs_frame, text=surf).grid(row=r + 1, column=0, padx=10, pady=5, sticky="w")
 
             # --- ComboBox materiału ---
             combo = ctk.CTkComboBox(
@@ -2826,7 +2828,7 @@ class SettingsPage(ctk.CTkFrame):
                 command=lambda mat, s=surf: self._apply_material_preset(s, mat)
             )
             combo.set("Beton / tynk")
-            combo.grid(row=r + 1, column=0, padx=10, pady=5)
+            combo.grid(row=r + 1, column=1, padx=10, pady=5)
 
             self.material_combos[surf] = combo
 
@@ -2834,7 +2836,7 @@ class SettingsPage(ctk.CTkFrame):
             for c, f in enumerate(freqs):
                 e = ctk.CTkEntry(abs_frame, width=60)
                 e.insert(0, "0.20")
-                e.grid(row=r + 1, column=c + 1, padx=5, pady=5)
+                e.grid(row=r + 1, column=c + 2, padx=5, pady=5)
                 self.abs_entries[(surf, f)] = e
 
         # =========================================================

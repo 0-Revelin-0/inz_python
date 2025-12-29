@@ -176,14 +176,7 @@ def deconvolve_full(recorded, inverse_filter):
 
 
 def _extract_segment_from_peak(ir_full, fs, length_s, pre_ms=50):
-    """
-    Wyciąga fragment IR zaczynając pre_ms przed maksimum amplitudy.
 
-    pre_ms = 50 ms:
-    - fizycznie poprawne dla niskich częstotliwości (~100 Hz),
-    - zapobiega obcinaniu pierwszej półfali LF,
-    - eliminuje sztuczne oscylacje w IR.
-    """
 
     ir_full = np.asarray(ir_full, dtype=np.float32)
 
@@ -206,14 +199,7 @@ def _extract_segment_from_peak(ir_full, fs, length_s, pre_ms=50):
 
 
 def _extract_segment_from_index(x, start_idx, fs, length_s, pre_ms=50):
-    """
-    Wyciąga fragment IR zaczynając pre_ms przed zadanym indeksem.
-    Używane do stereo alignment i averaging.
 
-    pre_ms = 50 ms:
-    - spójne z _extract_segment_from_peak
-    - fizycznie poprawne dla LF
-    """
 
     x = np.asarray(x, dtype=np.float32)
 
@@ -244,11 +230,7 @@ def _normalize_signal(x):
 
 
 def compute_mag_response(ir, fs):
-    """
-    Liczy charakterystykę amplitudową [dB] z IR.
-    Zwraca:
-        freqs [Hz], mag_db [dB]
-    """
+
     nfft = 1
     n = len(ir)
     while nfft < n:
@@ -507,10 +489,6 @@ def measure_ir(params, audio_cfg):
 
 
 def smooth_mag_response(freqs, mag_db, fraction=6):
-    """
-    - uśrednianie mocy (power mean)
-
-    """
 
     # Konwersja wejść do tablic
     freqs = np.asarray(freqs)

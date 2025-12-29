@@ -2,33 +2,61 @@ import numpy as np
 import sounddevice as sd
 
 
+def set_rms_dbfs(x: np.ndarray, target_dbfs: float, eps: float = 1e-12) -> np.ndarray:
+    """Skalowanie sygnału do zadanego poziomu RMS w dBFS (FS=1.0)."""
+    rms = np.sqrt(np.mean(x*x) + eps)
+    target_rms = 10 ** (target_dbfs / 20.0)
+    return x * (target_rms / rms)
 
-def generate_pink_noise(duration, fs, level_db=-1):
-    """
-    Generacja różowego szumu metodą filtracji białego szumu
-    przez filtr 1/f.
-    """
-    n = int(duration * fs)
+def generate_pink_noise(duration: float,
+                            fs: int,
+                            level_dbfs_rms: float = -12.0,
+                            f_low: float = 20.0,
+                            f_high: float | None = None,
+                            seed: int | None = None) -> np.ndarray:
 
-    # biały szum
-    white = np.random.normal(0.0, 1.0, n)
+    if seed is not None:
+        rng = np.random.default_rng(seed)
+        white = rng.normal(0.0, 1.0, int(duration * fs))
+    else:
+        white = np.random.normal(0.0, 1.0, int(duration * fs))
 
-    # FFT białego szumu
-    spectrum = np.fft.rfft(white)
-    freqs = np.fft.rfftfreq(n, 1/fs)
+    n = white.size
+    if n < 4:
+        raise ValueError("Za krótki sygnał.")
 
-    # filtr 1/f (pink noise)
-    pink_filter = 1 / np.maximum(freqs, 1.0)  # unika dzielenia przez 0
-    spectrum *= pink_filter
+    # RFFT
+    X = np.fft.rfft(white)
+    freqs = np.fft.rfftfreq(n, d=1.0/fs)
 
-    pink = np.fft.irfft(spectrum)
-    pink = pink / np.max(np.abs(pink) + 1e-12)
+    # Ograniczenia pasma
+    if f_high is None:
+        f_high = fs / 2.0
 
-    # Ustaw poziom w dBFS
-    scale = 10 ** (level_db / 20)
-    pink *= scale
+    # Filtr amplitudowy: 1/sqrt(f) -> PSD ~ 1/f
+    f = np.maximum(freqs, 1e-9)           # zabezpieczenie
+    H = 1.0 / np.sqrt(f)
+
+    # Usuń DC (żeby nie było offsetu)
+    H[0] = 0.0
+
+    # Utnij pasmo poza [f_low, f_high] jeśli podane
+    H[freqs < f_low] = 0.0
+    H[freqs > f_high] = 0.0
+
+    # Zastosuj filtr
+    X *= H
+
+    pink = np.fft.irfft(X, n=n)
+
+    #usuń ewentualny bardzo mały offset numeryczny
+    pink -= np.mean(pink)
+
+    # Ustaw poziom RMS w dBFS
+    pink = set_rms_dbfs(pink, level_dbfs_rms)
 
     return pink.astype(np.float32)
+
 
 
 
@@ -44,7 +72,7 @@ class PinkNoisePlayer:
         self.idx = 0
         self.fs = 48000
 
-    def start(self, audio_cfg, level_db=0):
+    def start(self, audio_cfg, level_db=-6):
         if self.running:
             return
 
