@@ -154,7 +154,7 @@ def generate_late_reverb(fs, duration_s, t60_bands, mfp):
     nL = np.sum(shaped, axis=0)
 
     # Fade-in pogłosu
-    t_fade = 2.0 * mfp / SPEED_OF_SOUND # czas trwania fade-in [s], proporcjonalny do podwójnej średniej drogi swobodnej
+    t_fade = 3.0 * mfp / SPEED_OF_SOUND # czas trwania fade-in [s], proporcjonalny do podwójnej średniej drogi swobodnej
     fade_len = int(t_fade * fs) # liczba próbek fade-in
 
     if fade_len > 1 and fade_len < n_samples:

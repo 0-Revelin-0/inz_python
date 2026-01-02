@@ -8,7 +8,15 @@ def generate_exponential_sweep(fs, duration, f_start, f_end):
     if f_start <= 0:
         raise ValueError("f_start musi być > 0 Hz")
 
+    if f_end > fs/2:
+        raise ValueError("f_end musi być < połowy częstotliwości Nyquista")
+
     # generowanie parametrów
+
+    # Od od kilku Herz do połowy Nyq f_start i f_stop (dodać)
+    f_start = 10
+    f_end = fs/2
+
     R = float(f_end) / float(f_start)
     n_samples = int(fs * duration)
     t = np.linspace(0.0, duration, n_samples, endpoint=False)

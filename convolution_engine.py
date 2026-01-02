@@ -10,9 +10,7 @@ from hrtf_engine import apply_hrtf_to_audio
 # ============================== HELPERS ===============================
 
 def _load_wav_mono_stereo(path: str) -> Tuple[np.ndarray, int]:
-    """
-    Wczytuje WAV → (N, C), gdzie C=1 lub 2. float32.
-    """
+
     if not os.path.isfile(path):
         raise ValueError(f"Plik nie istnieje:\n{path}")
 
@@ -26,7 +24,7 @@ def _load_wav_mono_stereo(path: str) -> Tuple[np.ndarray, int]:
 
 
 def _downmix_to_mono(data: np.ndarray) -> np.ndarray:
-    """Z (N, C) → (N,1) uśredniając kanały. Jeśli C==1 → bez zmian."""
+
     if data.shape[1] == 1:
         return data
     mono = data.mean(axis=1, keepdims=True)
@@ -34,7 +32,7 @@ def _downmix_to_mono(data: np.ndarray) -> np.ndarray:
 
 
 def _fft_convolve_1d(x: np.ndarray, h: np.ndarray) -> np.ndarray:
-    """Konwolucja FFT (full). Zwraca length = len(x)+len(h)-1."""
+
     x = np.asarray(x, dtype=np.float32)
     h = np.asarray(h, dtype=np.float32)
 
@@ -51,7 +49,7 @@ def _fft_convolve_1d(x: np.ndarray, h: np.ndarray) -> np.ndarray:
 
 
 def _normalize_ir_mono(ir: np.ndarray) -> np.ndarray:
-    """Normalizacja IR mono do max=1."""
+
     if ir.ndim == 2:
         ir = ir[:, 0]
     max_abs = float(np.max(np.abs(ir)) + 1e-12)
@@ -59,7 +57,7 @@ def _normalize_ir_mono(ir: np.ndarray) -> np.ndarray:
 
 
 def _normalize_ir_stereo(ir_L: np.ndarray, ir_R: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    """Wspólna normalizacja IR stereo."""
+
     if ir_L.ndim == 2:
         ir_L = ir_L[:, 0]
     if ir_R.ndim == 2:
@@ -72,14 +70,11 @@ def _normalize_ir_stereo(ir_L: np.ndarray, ir_R: np.ndarray) -> Tuple[np.ndarray
 
 
 def _rms(x: np.ndarray) -> float:
-    """Root Mean Square sygnału."""
+
     return float(np.sqrt(np.mean(x**2)) + 1e-12)
 
 def normalize_to_dbfs(signal: np.ndarray, target_dbfs: float = -6.0) -> np.ndarray:
-    """
-    Normalizuje sygnał (mono lub stereo) wspólnym gainem do target_dbfs.
-    Zachowuje relację L/R.
-    """
+
     target_peak = 10 ** (target_dbfs / 20.0)
     peak = float(np.max(np.abs(signal)))
 
@@ -113,6 +108,7 @@ def convolve_audio_files(
 
 
     """
+    Główna funkcja silnika
     Silnik splotu audio z RMS matching + logarytmicznym wet/dry.
     """
 
@@ -121,8 +117,6 @@ def convolve_audio_files(
     wet_frac = np.clip(float(wet), 0.0, 1.0)
 
     # logarytmiczna krzywa (bardziej naturalna)
-    # 0 → bardzo subtelny
-    # 1 → pełny pogłos
     wet_adj = wet_frac ** 1.5
     dry_adj = 1.0 - wet_adj
 
@@ -244,7 +238,7 @@ def convolve_audio_files(
             audio_R = audio_mono
 
     # -------------------- RMS MATCHING -----------------------
-    # Wspólny gain dla stereo (żeby nie psuć balansu L/R).
+    # Wspólny gain dla stereo (żeby nie psuć balansu L/R)
     if out_channels == 1:
         gain = _rms(audio_L) / _rms(y_L)
         y_L *= gain
