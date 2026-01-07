@@ -50,17 +50,23 @@ def generate_inverse_filter(sweep, fs, f_start, f_end):
     Inverse filter do metody ESS (Farina – Time Reversal Mirror).
     """
 
+    if f_start <= 0:
+        raise ValueError("f_start musi być > 0 Hz")
+
+    if f_end > fs / 2:
+        raise ValueError("f_end musi być < połowy częstotliwości Nyquista")
+
+    # Od od kilku Herz do połowy Nyq f_start i f_stop (dodać)
+    f_start = 10
+    f_end = fs / 2
+
     sweep = np.asarray(sweep, dtype=np.float64)
 
+    # parametr ESS
     n = len(sweep)
     T = n / fs
     t = np.linspace(0.0, T, n, endpoint=False)
 
-    # parametr ESS
-    if f_start <= 0.0:
-        raise ValueError("f_start musi być > 0 Hz")
-    if f_end <= f_start:
-        raise ValueError("f_end musi być > f_start")
 
     L = np.log(f_end / f_start) / T
 

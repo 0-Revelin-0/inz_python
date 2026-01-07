@@ -3,7 +3,7 @@ import sounddevice as sd
 
 
 def set_rms_dbfs(x: np.ndarray, target_dbfs: float, eps: float = 1e-12) -> np.ndarray:
-    """Skalowanie sygnału do zadanego poziomu RMS w dBFS (FS=1.0)."""
+    "Skalowanie sygnału do zadanego poziomu RMS w dBFS "
     rms = np.sqrt(np.mean(x*x) + eps)
     target_rms = 10 ** (target_dbfs / 20.0)
     return x * (target_rms / rms)
