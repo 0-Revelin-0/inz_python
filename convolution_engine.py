@@ -84,6 +84,13 @@ def normalize_to_dbfs(signal: np.ndarray, target_dbfs: float = -6.0) -> np.ndarr
 
     return signal
 
+def _dry_stereo_from_current_audio(audio_L: np.ndarray, audio_R: np.ndarray | None) -> tuple[np.ndarray, np.ndarray]:
+
+    if audio_R is None:
+        return audio_L, audio_L
+    return audio_L, audio_R
+
+
 
 # ============================ MAIN ENGINE ==============================
 
@@ -103,14 +110,20 @@ def convolve_audio_files(
     hrtf_early_ms: float = 80.0,
     hrtf_crossfade_ms: float = 10.0,
     hrtf_early_spread_deg: float = 15.0,
+    hrtf_early_sources: int = 3,
+    hrtf_late_sources: int = 14,
+    hrtf_late_time_jitter_ms: float = 6.0,
 ) -> str:
-
 
 
     """
     Główna funkcja silnika
     Silnik splotu audio z RMS matching + logarytmicznym wet/dry.
     """
+
+    mode = str(mode).strip()
+    if mode not in ("Mono", "Stereo"):
+        raise ValueError(f"Nieznany tryb splotu: {mode}. Oczekiwano 'Mono' lub 'Stereo'.")
 
     # -------------------- WET/DRY (wejście) --------------------
 
@@ -127,7 +140,6 @@ def convolve_audio_files(
 
     audio_L = audio[:, 0]
     audio_R = audio[:, 1] if C == 2 else None
-
 
     # ---------------------- IR ----------------------
 
@@ -159,6 +171,9 @@ def convolve_audio_files(
                 early_ms=float(hrtf_early_ms),
                 crossfade_ms=float(hrtf_crossfade_ms),
                 early_spread_deg=float(hrtf_early_spread_deg),
+                early_sources=int(hrtf_early_sources),
+                late_sources=int(hrtf_late_sources),
+                late_time_jitter_ms=float(hrtf_late_time_jitter_ms),
                 rng_seed=None,
             )
 
@@ -243,7 +258,8 @@ def convolve_audio_files(
         gain = _rms(audio_L) / _rms(y_L)
         y_L *= gain
     else:
-        dry_stack = np.stack([audio_L, audio_R], axis=1)
+        dry_L, dry_R = _dry_stereo_from_current_audio(audio_L, audio_R)
+        dry_stack = np.stack([dry_L, dry_R], axis=1)
         wet_stack = np.stack([y_L, y_R], axis=1)
         gain = _rms(dry_stack) / _rms(wet_stack)
         y_L *= gain
@@ -264,8 +280,9 @@ def convolve_audio_files(
     if out_channels == 1:
         out = _mix(audio_L, y_L)[:, None]
     else:
-        outL = _mix(audio_L, y_L)
-        outR = _mix(audio_R, y_R)
+        dry_L, dry_R = _dry_stereo_from_current_audio(audio_L, audio_R)
+        outL = _mix(dry_L, y_L)
+        outR = _mix(dry_R, y_R)
         out = np.stack([outL, outR], axis=1)
 
     # -------------------- NORMALIZACJA DO -6 dBFS -----------------------

@@ -93,6 +93,15 @@ def find_nearest_hrir_index(mat_data: dict, az_deg: float, el_deg: float) -> int
     score = daz + delv
     return int(np.argmin(score))
 
+def _az_gui_to_db(az_deg: float) -> float:
+    """Konwersja azymutu z konwencji GUI (+ = prawo) do konwencji bazy HRTF (+ = lewo)."""
+    return -float(az_deg)
+
+def _az_db_to_gui(az_deg: float) -> float:
+    """Konwersja azymutu z konwencji bazy HRTF (+ = lewo) do konwencji GUI (+ = prawo)."""
+    return -float(az_deg)
+
+
 
 def apply_hrtf_to_audio(
     audio: np.ndarray,
@@ -138,7 +147,7 @@ def apply_hrtf_to_audio(
     # Korekta konwencji osi:
     # GUI: +az = prawo
     # Baza HRTF: +az = lewo (CCW)
-    az_deg = -az_deg
+    az_deg = _az_gui_to_db(az_deg)
 
     idx = find_nearest_hrir_index(mat_data, az_deg=az_deg, el_deg=el_deg)
 
@@ -299,7 +308,7 @@ def build_binaural_ir_from_mono_ir(
         ))
 
     # LATE – totalnie losowe kierunki z siatki HRIR, ale symetryczne (mirror)
-    # Elewacje ograniczamy do [-30..90] (Twoje wymaganie), ale tylko jeśli takie są w bazie.
+    # Elewacje ograniczamy do [-30..90], ale tylko jeśli takie są w bazie.
 
     mat_data = load_hrtf_database(mat_path)
     az_all = mat_data["az_deg"].astype(np.float64, copy=False)
@@ -342,19 +351,20 @@ def build_binaural_ir_from_mono_ir(
         chosen = rng.choice(len(pair_indices), size=pairs_needed, replace=replace)
         for k in chosen:
             i, j = pair_indices[int(k)]
-            late_dirs.append((float(az_all[i]), float(el_all[i])))
-            late_dirs.append((float(az_all[j]), float(el_all[j])))
+            late_dirs.append((_az_db_to_gui(az_all[i]), float(el_all[i])))
+            late_dirs.append((_az_db_to_gui(az_all[j]), float(el_all[j])))
 
         # jeśli nieparzysta liczba źródeł – dobierz jeszcze jeden losowy kierunek
         if late_sources % 2 == 1:
             i = int(rng.choice(valid_idx))
-            late_dirs.append((float(az_all[i]), float(el_all[i])))
+            late_dirs.append((_az_db_to_gui(az_all[i]), float(el_all[i])))
 
     else:
         # jeśli nie chcemy parowania albo nie da się sparować – losujemy po prostu z siatki
         chosen = rng.choice(valid_idx, size=late_sources, replace=(valid_idx.size < late_sources))
         for i in chosen:
-            late_dirs.append((float(az_all[int(i)]), float(el_all[int(i)])))
+            late_dirs.append((_az_db_to_gui(az_all[int(i)]), float(el_all[int(i)])))
+
 
     rng.shuffle(late_dirs)
 

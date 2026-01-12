@@ -387,84 +387,6 @@ class ConvolutionPage(ctk.CTkFrame):
         # Wstępne wyczyszczenie wykresów IR/Audio
         self._clear_plots()
 
-    # =============================================================
-    # PANEL HRTF – suwaki + reset (LEWY PANEL)
-    # =============================================================
-    def _create_hrtf_panel(self, parent):
-        """
-        Tworzy panel z ustawieniami HRTF (Top view + Side view),
-        ale NIE pakuje go jeszcze w grid – tym zajmuje się _on_hrtf_toggle().
-        """
-        self.hrtf_panel_row = 8  # pod przełącznikiem HRTF
-
-        panel = ctk.CTkFrame(parent)
-        self.hrtf_panel = panel
-
-        ctk.CTkLabel(
-            panel,
-            text="HRTF – kierunek źródła",
-            font=("Arial", 14, "bold")
-        ).grid(row=0, column=0, sticky="w", padx=5, pady=(5, 5))
-
-        # --- TOP VIEW (azymut) ---
-        top_frame = ctk.CTkFrame(panel)
-        top_frame.grid(row=1, column=0, sticky="ew", padx=5, pady=(0, 8))
-        top_frame.grid_columnconfigure(0, weight=1)
-
-        ctk.CTkLabel(
-            top_frame,
-            text="Widok z góry (Top view) – azymut:",
-        ).grid(row=0, column=0, sticky="w", pady=(5, 2))
-
-        self.hrtf_az_slider = ctk.CTkSlider(
-            top_frame,
-            from_=-180,
-            to=180,
-            number_of_steps=360,
-            command=self._on_az_slider
-        )
-        self.hrtf_az_slider.set(0.0)
-        self.hrtf_az_slider.grid(row=1, column=0, sticky="ew", padx=(0, 5))
-
-        self.hrtf_az_label = ctk.CTkLabel(
-            top_frame,
-            text="Azymut: 0°"
-        )
-        self.hrtf_az_label.grid(row=2, column=0, sticky="w", pady=(2, 5))
-
-        # --- SIDE VIEW (elewacja) ---
-        side_frame = ctk.CTkFrame(panel)
-        side_frame.grid(row=2, column=0, sticky="ew", padx=5, pady=(0, 5))
-        side_frame.grid_columnconfigure(0, weight=1)
-
-        ctk.CTkLabel(
-            side_frame,
-            text="Widok z boku (Side view) – elewacja:",
-        ).grid(row=0, column=0, sticky="w", pady=(5, 2))
-
-        self.hrtf_el_slider = ctk.CTkSlider(
-            side_frame,
-            from_=-40,
-            to=90,
-            number_of_steps=130,
-            command=self._on_el_slider
-        )
-        self.hrtf_el_slider.set(0.0)
-        self.hrtf_el_slider.grid(row=1, column=0, sticky="ew", padx=(0, 5))
-
-        self.hrtf_el_label = ctk.CTkLabel(
-            side_frame,
-            text="Elewacja: 0°"
-        )
-        self.hrtf_el_label.grid(row=2, column=0, sticky="w", pady=(2, 5))
-
-        reset_btn = ctk.CTkButton(
-            panel,
-            text="Reset do przodu (0°, 0°)",
-            width=140,
-            command=self._reset_hrtf_angles
-        )
-        reset_btn.grid(row=3, column=0, sticky="w", padx=5, pady=(5, 8))
 
     def _on_hrtf_toggle(self):
         """
@@ -528,9 +450,6 @@ class ConvolutionPage(ctk.CTkFrame):
         self._on_az_slider(0.0)
         self._on_el_slider(0.0)
 
-    # =============================================================
-    # FIGURA HRTF (PRAWY TAB "HRTF")
-    # =============================================================
     # =============================================================
     # PANEL HRTF – suwaki + reset (LEWY PANEL)
     # =============================================================
@@ -1148,6 +1067,9 @@ class ConvolutionPage(ctk.CTkFrame):
                         hrtf_early_ms=hrtf_cfg["early_ms"],
                         hrtf_crossfade_ms=hrtf_cfg["crossfade_ms"],
                         hrtf_early_spread_deg=hrtf_cfg["early_spread_deg"],
+                        hrtf_early_sources=hrtf_cfg["early_sources"],
+                        hrtf_late_sources=hrtf_cfg["late_sources"],
+                        hrtf_late_time_jitter_ms=hrtf_cfg["late_time_jitter_ms"],
                     )
                 else:
                     out_file = convolve_audio_files(
@@ -1287,6 +1209,9 @@ class ConvolutionPage(ctk.CTkFrame):
                         hrtf_early_ms=hrtf_cfg["early_ms"],
                         hrtf_crossfade_ms=hrtf_cfg["crossfade_ms"],
                         hrtf_early_spread_deg=hrtf_cfg["early_spread_deg"],
+                        hrtf_early_sources=hrtf_cfg["early_sources"],
+                        hrtf_late_sources=hrtf_cfg["late_sources"],
+                        hrtf_late_time_jitter_ms=hrtf_cfg["late_time_jitter_ms"],
                     )
 
                 else:
@@ -2872,7 +2797,8 @@ class SettingsPage(ctk.CTkFrame):
         # ==============================
         # Ustawienia splotu -> HRTF
         # ==============================
-        conv_tab = self.tabs.add("Splot audio")  # jeśli Twoje TabView nazywa się inaczej niż self.tabs, użyj tej nazwy
+        self.tabs.add("Splot audio")
+        conv_tab = self.tabs.tab("Splot audio") # jeśli Twoje TabView nazywa się inaczej niż self.tabs, użyj tej nazwy
 
         self.hrtf_db_var = ctk.StringVar(value="")
 
@@ -2890,6 +2816,11 @@ class SettingsPage(ctk.CTkFrame):
         self.hrtf_early_ms_var = ctk.StringVar(value="80.0")  # ms early reflections
         self.hrtf_crossfade_ms_var = ctk.StringVar(value="10.0")  # ms crossfade Hann na granicach
         self.hrtf_early_spread_var = ctk.StringVar(value="15.0")  # deg spread early
+
+        # --- HRTF: parametry "liczby źródeł" i jitter late ---
+        self.hrtf_early_sources_var = ctk.StringVar(value="3")
+        self.hrtf_late_sources_var = ctk.StringVar(value="14")
+        self.hrtf_late_time_jitter_var = ctk.StringVar(value="6.0")
 
         row = ctk.CTkFrame(conv_tab)
         row.pack(fill="x", padx=15, pady=(0, 15))
@@ -2924,6 +2855,9 @@ class SettingsPage(ctk.CTkFrame):
         _row("Crossfade Hann [ms]:", self.hrtf_crossfade_ms_var)
         _row("Early spread azymutu [deg]:", self.hrtf_early_spread_var)
 
+        _row("Early sources (liczba kierunków):", self.hrtf_early_sources_var)
+        _row("Late sources (liczba kierunków):", self.hrtf_late_sources_var)
+        _row("Late time jitter [ms]:", self.hrtf_late_time_jitter_var)
 
     # =====================================================================
     # --- DEVICE HANDLING (jak wcześniej) ---
@@ -3256,11 +3190,21 @@ class SettingsPage(ctk.CTkFrame):
             except Exception:
                 return float(default)
 
+        def _i(var: ctk.StringVar, default: int) -> int:
+            try:
+                return int(float(var.get().strip().replace(",", ".")))
+            except Exception:
+                return int(default)
+
         cfg = {
             "direct_tail_ms": _f(self.hrtf_direct_tail_var, 5.0),
             "early_ms": _f(self.hrtf_early_ms_var, 80.0),
             "crossfade_ms": _f(self.hrtf_crossfade_ms_var, 10.0),
             "early_spread_deg": _f(self.hrtf_early_spread_var, 15.0),
+
+            "early_sources": _i(self.hrtf_early_sources_var, 3),
+            "late_sources": _i(self.hrtf_late_sources_var, 14),
+            "late_time_jitter_ms": _f(self.hrtf_late_time_jitter_var, 6.0),
         }
 
         # proste zabezpieczenia (żeby nie było wartości ujemnych)
@@ -3268,6 +3212,10 @@ class SettingsPage(ctk.CTkFrame):
         cfg["early_ms"] = max(0.0, cfg["early_ms"])
         cfg["crossfade_ms"] = max(0.0, cfg["crossfade_ms"])
         cfg["early_spread_deg"] = max(0.0, cfg["early_spread_deg"])
+
+        cfg["early_sources"] = max(1, int(cfg["early_sources"]))
+        cfg["late_sources"] = max(1, int(cfg["late_sources"]))
+        cfg["late_time_jitter_ms"] = max(0.0, float(cfg["late_time_jitter_ms"]))
 
         return cfg
 
