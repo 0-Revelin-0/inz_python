@@ -271,7 +271,7 @@ class ConvolutionPage(ctk.CTkFrame):
 
         self.preview_button = ctk.CTkButton(
             bottom,
-            text="🔊 Preview",
+            text="🔊 Podgląd",
             command=self._toggle_preview,
         )
         self.preview_button.pack(fill="x", pady=(0, 8))
@@ -361,7 +361,7 @@ class ConvolutionPage(ctk.CTkFrame):
         self.ax_ir = self.fig.add_subplot(2, 1, 1)
         self.ax_ir.set_facecolor("#111111")
         self.ax_ir.grid(True, color="#444444", alpha=0.3)
-        self.ax_ir.set_title("Impulse Response", color="white")
+        self.ax_ir.set_title("Odpowiedź impulsowa", color="white")
         self.ax_ir.set_xlabel("Czas [s]", color="white")
         self.ax_ir.set_ylabel("Amplituda", color="white")
         self.ax_ir.tick_params(colors="white")
@@ -369,7 +369,7 @@ class ConvolutionPage(ctk.CTkFrame):
         self.ax_audio = self.fig.add_subplot(2, 1, 2)
         self.ax_audio.set_facecolor("#111111")
         self.ax_audio.grid(True, color="#444444", alpha=0.3)
-        self.ax_audio.set_title("Convolved audio", color="white")
+        self.ax_audio.set_title("Splecione audio", color="white")
         self.ax_audio.set_xlabel("Czas [s]", color="white")
         self.ax_audio.set_ylabel("Amplituda", color="white")
         self.ax_audio.tick_params(colors="white")
@@ -482,7 +482,7 @@ class ConvolutionPage(ctk.CTkFrame):
         # etykieta nad suwakiem
         top_label = ctk.CTkLabel(
             top_frame,
-            text="Widok z góry (Top view) – azymut:"
+            text="Widok z góry – azymut:"
         )
         top_label.pack(anchor="w", pady=(5, 2))
 
@@ -512,7 +512,7 @@ class ConvolutionPage(ctk.CTkFrame):
 
         side_label = ctk.CTkLabel(
             side_frame,
-            text="Widok z boku (Side view) – elewacja:"
+            text="Widok z boku – elewacja:"
         )
         side_label.pack(anchor="w", pady=(5, 2))
 
@@ -894,7 +894,7 @@ class ConvolutionPage(ctk.CTkFrame):
         self.ax_ir.cla()
         self.ax_ir.set_facecolor("#111111")
         self.ax_ir.grid(True, color="#444444", alpha=0.3)
-        self.ax_ir.set_title("Impulse Response", color="white")
+        self.ax_ir.set_title("Odpowiedź impulsowa", color="white")
         self.ax_ir.set_xlabel("Czas [s]", color="white")
         self.ax_ir.set_ylabel("Amplituda", color="white")
         self.ax_ir.tick_params(colors="white")
@@ -903,7 +903,7 @@ class ConvolutionPage(ctk.CTkFrame):
         self.ax_audio.cla()
         self.ax_audio.set_facecolor("#111111")
         self.ax_audio.grid(True, color="#444444", alpha=0.3)
-        self.ax_audio.set_title("Convolved audio", color="white")
+        self.ax_audio.set_title("Splecione audio", color="white")
         self.ax_audio.set_xlabel("Czas [s]", color="white")
         self.ax_audio.set_ylabel("Amplituda", color="white")
         self.ax_audio.tick_params(colors="white")
@@ -943,7 +943,7 @@ class ConvolutionPage(ctk.CTkFrame):
                 ir_plot = ir
                 t_ir_plot = t_ir
 
-            self.ax_ir.set_title(f"Impulse Response ({channel_label_ir})", color="white")
+            self.ax_ir.set_title(f"Odpowiedź impulsowa ({channel_label_ir})", color="white")
             self.ax_ir.plot(t_ir_plot, ir_plot, linewidth=0.9, color="#4fc3f7")
 
         # ---------------- CONVOLVED AUDIO ----------------
@@ -974,7 +974,7 @@ class ConvolutionPage(ctk.CTkFrame):
                 audio_plot = audio
                 t_a_plot = t_a
 
-            self.ax_audio.set_title(f"Convolved audio ({channel_label_audio})", color="white")
+            self.ax_audio.set_title(f"Splecione audio ({channel_label_audio})", color="white")
             self.ax_audio.plot(t_a_plot, audio_plot, linewidth=0.9, color="#009688")
 
 
@@ -1119,9 +1119,9 @@ class ConvolutionPage(ctk.CTkFrame):
 
         # reset UI
         if hasattr(self, "preview_button"):
-            self.preview_button.configure(text="🔊 Preview", state="normal")
+            self.preview_button.configure(text="🔊 Podgląd", state="normal")
         if hasattr(self, "status_label"):
-            self.status_label.configure(text="Preview zatrzymane.")
+            self.status_label.configure(text="Podgląd zatrzymany.")
 
         # usuń temp plik (jeśli istnieje)
         if self._preview_temp_path and os.path.isfile(self._preview_temp_path):
@@ -1179,8 +1179,8 @@ class ConvolutionPage(ctk.CTkFrame):
         self._preview_temp_path = tmp_path
 
         # UI
-        self.preview_button.configure(text="⏹ Stop preview", state="disabled")
-        self.status_label.configure(text="Trwa przygotowanie preview (splot audio)...")
+        self.preview_button.configure(text="⏹ Zatrzymaj podgląd", state="disabled")
+        self.status_label.configure(text="Trwa przygotowanie podglądu (splot audio)...")
 
         def worker():
             try:
@@ -1243,8 +1243,8 @@ class ConvolutionPage(ctk.CTkFrame):
                 def start_playback():
                     try:
                         self._preview_is_playing = True
-                        self.preview_button.configure(text="⏹ Stop preview", state="normal")
-                        self.status_label.configure(text="Preview: odtwarzanie...")
+                        self.preview_button.configure(text="⏹ Zatrzymaj podgląd", state="normal")
+                        self.status_label.configure(text="Podgląd: odtwarzanie...")
 
 
                         sd.play(data, samplerate=int(fs), device=out_dev)
@@ -1274,7 +1274,7 @@ class ConvolutionPage(ctk.CTkFrame):
                     show_error(str(e))
                     if hasattr(self, "preview_button"):
                         self.preview_button.configure(text="🔊 Preview", state="normal")
-                    self.status_label.configure(text="Błąd podczas preview.")
+                    self.status_label.configure(text="Błąd podczas podglądu.")
                     # usuń temp
                     if self._preview_temp_path and os.path.isfile(self._preview_temp_path):
                         try:
@@ -1333,7 +1333,7 @@ class MeasurementPage(ctk.CTkFrame):
 
         self.pinknoise_button = ctk.CTkButton(
             left,
-            text="Start Pink Noise",
+            text="Odtwórz szum różowy",
             command=self._toggle_pink_noise
         )
         self.pinknoise_button.pack(fill="x", pady=(5, 10))
@@ -1353,14 +1353,14 @@ class MeasurementPage(ctk.CTkFrame):
         self.sweep_length = self._make_param(left, "Długość sweepa [s]:", "5")
         self.sweep_length.bind("<KeyRelease>", self._on_sweep_change)
 
-        self.start_freq = self._make_param(left, "Start freq [Hz]:", "100")
-        self.end_freq = self._make_param(left, "End freq [Hz]:", "10000")
+        self.start_freq = self._make_param(left, "Częstotliwość początkowa [Hz]:", "100")
+        self.end_freq = self._make_param(left, "Częstotliwość końcowa [Hz]:", "10000")
         self.ir_length = self._make_param(left, "Długość IR [s]:", "8")
 
         ToolTip(
             self.ir_length,
             "Długość odpowiedzi impulsowej.\n"
-            "W trybie uśredniania (averages > 1) IR musi być\n"
+            "W trybie uśredniania (uśrednienia > 1) IR musi być\n"
             "≤ długości sweepa, aby uniknąć aliasingu ogona."
         )
 
@@ -1371,14 +1371,14 @@ class MeasurementPage(ctk.CTkFrame):
         self.measure_mode_var = ctk.StringVar(value="single")
 
         self.mode_single = ctk.CTkRadioButton(
-            left, text="Single sweep",
+            left, text="Pojedyńczy sweep",
             variable=self.measure_mode_var, value="single",
             command=self._on_mode_change
         )
         self.mode_single.pack(anchor="w", pady=(5, 5))
 
         self.mode_avg = ctk.CTkRadioButton(
-            left, text="Averaging (Farina)",
+            left, text="Uśrednianie",
             variable=self.measure_mode_var, value="average",
             command=self._on_mode_change
         )
@@ -1400,7 +1400,7 @@ class MeasurementPage(ctk.CTkFrame):
                       command=self._choose_folder).pack(side="right")
 
         # ---------- Start measurement ----------
-        self.start_button = ctk.CTkButton(left, text="Start measurement", fg_color="#d71920",
+        self.start_button = ctk.CTkButton(left, text="Wystartuj pomiar", fg_color="#d71920",
                                           hover_color="#b01015", command=self._start_measurement)
         self.start_button.pack(fill="x", pady=(30, 5))
 
@@ -1647,7 +1647,7 @@ class MeasurementPage(ctk.CTkFrame):
         self.ax_ir.cla()
         self.ax_ir.set_facecolor("#111111")
         self.ax_ir.grid(True, color="#444444", alpha=0.3)
-        self.ax_ir.set_title(f"Impulse Response ({channel_label})", color="white")
+        self.ax_ir.set_title(f"Odpowiedź impulsowa ({channel_label})", color="white")
         self.ax_ir.set_xlabel("Czas [s]", color="white")
         self.ax_ir.set_ylabel("Amplituda", color="white")
 
@@ -1683,7 +1683,7 @@ class MeasurementPage(ctk.CTkFrame):
         self.ax_mag.cla()
         self.ax_mag.set_facecolor("#111111")
         self.ax_mag.grid(True, color="#444444", alpha=0.3)
-        self.ax_mag.set_title(f"Magnitude Response ({channel_label})", color="white")
+        self.ax_mag.set_title(f"Odpowiedź częstotliwościowa ({channel_label})", color="white")
         self.ax_mag.set_xlabel("Częstotliwość [Hz]", color="white")
         self.ax_mag.set_ylabel("Poziom [dB]", color="white")
 
@@ -1738,13 +1738,13 @@ class MeasurementPage(ctk.CTkFrame):
         if hasattr(self, "pinknoise_running") and self.pinknoise_running:
             self._stop_pink_noise()
             self.pinknoise_running = False
-            self.pinknoise_button.configure(text="Start Pink Noise")
+            self.pinknoise_button.configure(text="Wystartuj szum różowy")
             return
 
         # jeśli pink noise jest wyłączony → włącz
         self._start_pink_noise()
         self.pinknoise_running = True
-        self.pinknoise_button.configure(text="Stop Pink Noise")
+        self.pinknoise_button.configure(text="Zatrzymaj szum różowy")
 
     def _make_param(self, parent, label_text, default):
         frame = ctk.CTkFrame(parent)
@@ -1766,7 +1766,7 @@ class MeasurementPage(ctk.CTkFrame):
         self.ax_ir.cla()
         self.ax_ir.set_facecolor("#111111")
         self.ax_ir.grid(True, color="#444444", alpha=0.3)
-        self.ax_ir.set_title("Impulse Response", color="white")
+        self.ax_ir.set_title("Odpowiedź impulsowa", color="white")
         self.ax_ir.set_xlabel("Czas [s]", color="white")
         self.ax_ir.set_ylabel("Amplituda", color="white")
 
@@ -1774,7 +1774,7 @@ class MeasurementPage(ctk.CTkFrame):
         self.ax_mag.cla()
         self.ax_mag.set_facecolor("#111111")
         self.ax_mag.grid(True, color="#444444", alpha=0.3)
-        self.ax_mag.set_title("Magnitude Response", color="white")
+        self.ax_mag.set_title("Odpowiedź częstotliwościowa", color="white")
         self.ax_mag.set_xlabel("Częstotliwość [Hz]", color="white")
         self.ax_mag.set_ylabel("Poziom [dB]", color="white")
 
@@ -1833,7 +1833,7 @@ class MeasurementPage(ctk.CTkFrame):
         # Po parsowaniu parametrów ewentualna poprawa złych pól
 
         if start_f <= 0:
-            show_error("Start freq musi być > 0 Hz.")
+            show_error("Częstotlwość początkowa musi być > 0 Hz.")
             return
 
         if avg_count < 1:
@@ -1864,7 +1864,7 @@ class MeasurementPage(ctk.CTkFrame):
 
         # sanity check
         if end_f <= start_f:
-            show_error("End freq musi być większe niż Start freq.")
+            show_error("Częstotliwosć końcowa musi być większe niż Start freq.")
             return
 
         # Folder wyjściowy
@@ -2207,7 +2207,7 @@ class GeneratorPage(ctk.CTkFrame):
         self.ax_ir = self.fig.add_subplot(2, 1, 1)
         self.ax_ir.set_facecolor("#111111")
         self.ax_ir.grid(True, color="#444444", alpha=0.3)
-        self.ax_ir.set_title("Impulse Response", color="white")
+        self.ax_ir.set_title("Odpowiedź impulsowa", color="white")
         self.ax_ir.set_xlabel("Czas [s]", color="white")
         self.ax_ir.set_ylabel("Amplituda", color="white")
         self.ax_ir.tick_params(colors="white")
@@ -2216,7 +2216,7 @@ class GeneratorPage(ctk.CTkFrame):
         self.ax_mag = self.fig.add_subplot(2, 1, 2)
         self.ax_mag.set_facecolor("#111111")
         self.ax_mag.grid(True, color="#444444", alpha=0.3)
-        self.ax_mag.set_title("Magnitude Response", color="white")
+        self.ax_mag.set_title("Odpowiedź częstotliwościowa", color="white")
         self.ax_mag.set_xlabel("Częstotliwość [Hz]", color="white")
         self.ax_mag.set_ylabel("Poziom [dB]", color="white")
         self.ax_mag.tick_params(colors="white")
@@ -2239,7 +2239,7 @@ class GeneratorPage(ctk.CTkFrame):
         self.ax_ir.cla()
         self.ax_ir.set_facecolor("#111111")
         self.ax_ir.grid(True, color="#444444", alpha=0.3)
-        self.ax_ir.set_title("Impulse Response", color="white")
+        self.ax_ir.set_title("Odpowiedź impulsowa", color="white")
         self.ax_ir.set_xlabel("Czas [s]", color="white")
         self.ax_ir.set_ylabel("Amplituda", color="white")
         self.ax_ir.tick_params(colors="white")
@@ -2248,7 +2248,7 @@ class GeneratorPage(ctk.CTkFrame):
         self.ax_mag.cla()
         self.ax_mag.set_facecolor("#111111")
         self.ax_mag.grid(True, color="#444444", alpha=0.3)
-        self.ax_mag.set_title("Magnitude Response", color="white")
+        self.ax_mag.set_title("Odpowiedź częstotliwościowa", color="white")
         self.ax_mag.set_xlabel("Częstotliwość [Hz]", color="white")
         self.ax_mag.set_ylabel("Poziom [dB]", color="white")
         self.ax_mag.tick_params(colors="white")
@@ -2357,7 +2357,7 @@ class GeneratorPage(ctk.CTkFrame):
         self.ax_ir.cla()
         self.ax_ir.set_facecolor("#111111")
         self.ax_ir.grid(True, color="#444444", alpha=0.3)
-        self.ax_ir.set_title("Impulse Response (Generated)", color="white")
+        self.ax_ir.set_title("Odpowiedź impulsowa (Wygenerowana)", color="white")
         self.ax_ir.set_xlabel("Czas [s]", color="white")
         self.ax_ir.set_ylabel("Amplituda", color="white")
 
@@ -2376,7 +2376,7 @@ class GeneratorPage(ctk.CTkFrame):
         self.ax_mag.cla()
         self.ax_mag.set_facecolor("#111111")
         self.ax_mag.grid(True, color="#444444", alpha=0.3)
-        self.ax_mag.set_title("Magnitude Response (Generated)", color="white")
+        self.ax_mag.set_title("Odpowiedź częstotliwościowa (wygenerowana)", color="white")
         self.ax_mag.set_xlabel("Częstotliwość [Hz]", color="white")
         self.ax_mag.set_ylabel("Poziom [dB]", color="white")
 
@@ -2524,33 +2524,33 @@ class SettingsPage(ctk.CTkFrame):
         row_i = 0
 
         # Input device
-        ctk.CTkLabel(frame, text="Input device:").grid(row=row_i, column=0, padx=10, pady=5, sticky="w")
+        ctk.CTkLabel(frame, text="Urządzenia wejścia:").grid(row=row_i, column=0, padx=10, pady=5, sticky="w")
         self.input_device_combo = ctk.CTkComboBox(frame, values=[])
         self.input_device_combo.grid(row=row_i, column=1, padx=10, pady=5, sticky="ew")
         row_i += 1
 
         # Output device
-        ctk.CTkLabel(frame, text="Output device:").grid(row=row_i, column=0, padx=10, pady=5, sticky="w")
+        ctk.CTkLabel(frame, text="Urządzenia wyjścia:").grid(row=row_i, column=0, padx=10, pady=5, sticky="w")
         self.output_combo = ctk.CTkComboBox(frame, values=[])
         self.output_combo.grid(row=row_i, column=1, padx=10, pady=5, sticky="ew")
         row_i += 1
 
         # Sample rate
-        ctk.CTkLabel(frame, text="Sample rate [Hz]:").grid(row=row_i, column=0, padx=10, pady=5, sticky="w")
+        ctk.CTkLabel(frame, text="Częstotliwośc próbkowania [Hz]:").grid(row=row_i, column=0, padx=10, pady=5, sticky="w")
         self.sample_rate_combo = ctk.CTkComboBox(frame, values=["44100", "48000", "88200", "96000"])
         self.sample_rate_combo.set("48000")
         self.sample_rate_combo.grid(row=row_i, column=1, padx=10, pady=5, sticky="ew")
         row_i += 1
 
         # Buffer size
-        ctk.CTkLabel(frame, text="Buffer size [frames]:").grid(row=row_i, column=0, padx=10, pady=5, sticky="w")
+        ctk.CTkLabel(frame, text="Rozmiar bufora [ramki]:").grid(row=row_i, column=0, padx=10, pady=5, sticky="w")
         self.buffer_size_combo = ctk.CTkComboBox(frame, values=["64", "128", "256", "512", "1024"])
         self.buffer_size_combo.set("256")
         self.buffer_size_combo.grid(row=row_i, column=1, padx=10, pady=5, sticky="ew")
         row_i += 1
 
         # Smoothing
-        ctk.CTkLabel(frame, text="Smoothing:").grid(row=row_i, column=0, padx=10, pady=5, sticky="w")
+        ctk.CTkLabel(frame, text="Wygładzanie:").grid(row=row_i, column=0, padx=10, pady=5, sticky="w")
         self.smoothing_combo = ctk.CTkComboBox(
             frame,
             values=["Raw", "1/24", "1/12", "1/6", "1/3"],
@@ -2570,7 +2570,7 @@ class SettingsPage(ctk.CTkFrame):
         mag_ylim_frame.grid(row=4, column=0, columnspan=4, sticky="ew", padx=10, pady=(10, 5))
 
 
-        ctk.CTkLabel(mag_ylim_frame, text="Magnitude: zakres osi Y [dB]").grid(
+        ctk.CTkLabel(mag_ylim_frame, text="Odpowiedź częstotliwościowa: zakres osi Y [dB]").grid(
             row=0, column=0, columnspan=4, sticky="w", pady=(2, 6)
         )
 
@@ -2591,7 +2591,7 @@ class SettingsPage(ctk.CTkFrame):
         self.mag_ymax_entry.bind("<FocusOut>", self._on_mag_ylim_change)
 
         # IR window after peak (ms)
-        ctk.CTkLabel(frame, text="IR window after peak [ms]:").grid(
+        ctk.CTkLabel(frame, text="Długość wykresu odpowiedzi impulsowej po peaku [ms]:").grid(
             row=5, column=0, padx=10, pady=10, sticky="w"
         )
         self.ir_window_entry = ctk.CTkEntry(frame, width=120)
@@ -2600,7 +2600,7 @@ class SettingsPage(ctk.CTkFrame):
         self.ir_window_entry.bind("<KeyRelease>", self._on_ir_window_change)
 
         # Measurement mode (mono / stereo)
-        ctk.CTkLabel(frame, text="Measurement mode:").grid(
+        ctk.CTkLabel(frame, text="Tryb pomiaru:").grid(
             row=6, column=0, padx=10, pady=10, sticky="w"
         )
         self.measure_mode_combo = ctk.CTkComboBox(
@@ -2611,17 +2611,17 @@ class SettingsPage(ctk.CTkFrame):
         self.measure_mode_combo.grid(row=6, column=1, padx=10, pady=10, sticky="ew")
 
         # Input meter
-        ctk.CTkLabel(frame, text="Test input:").grid(row=7, column=0, padx=10, pady=10, sticky="w")
+        ctk.CTkLabel(frame, text="Test urządzenia wejścia:").grid(row=7, column=0, padx=10, pady=10, sticky="w")
         self.meter_bar = ctk.CTkProgressBar(frame, width=220)
         self.meter_bar.grid(row=7, column=1, padx=10, pady=10, sticky="e")
         self.meter_bar.set(0)
 
-        self.meter_btn = ctk.CTkButton(frame, text="Start input meter", command=self._toggle_meter)
+        self.meter_btn = ctk.CTkButton(frame, text="Start miernika urządzenia wejścia", command=self._toggle_meter)
         self.meter_btn.grid(row=7, column=1, padx=10, pady=10, sticky="w")
 
         # Test tone
-        ctk.CTkLabel(frame, text="Test output:").grid(row=9, column=0, padx=10, pady=10, sticky="w")
-        self.test_btn = ctk.CTkButton(frame, text="Test tone (1 kHz)", command=self._play_test)
+        ctk.CTkLabel(frame, text="Test urządzeń wyjścia:").grid(row=9, column=0, padx=10, pady=10, sticky="w")
+        self.test_btn = ctk.CTkButton(frame, text="Częstotliwość testowa (1 kHz)", command=self._play_test)
         self.test_btn.grid(row=9, column=1, padx=10, pady=15, sticky="w")
 
         # Załaduj listę wejść/wyjść
@@ -2673,7 +2673,7 @@ class SettingsPage(ctk.CTkFrame):
         gen_params_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 15))
         gen_params_frame.grid_columnconfigure(1, weight=1)
 
-        ctk.CTkLabel(gen_params_frame, text="Sample rate [Hz]:    ").grid(
+        ctk.CTkLabel(gen_params_frame, text="Częstotliwość próbkowania [Hz]:    ").grid(
             row=0, column=0, sticky="w", pady=5
         )
         self.gen_sample_rate_combo = ctk.CTkComboBox(
@@ -2789,7 +2789,7 @@ class SettingsPage(ctk.CTkFrame):
         self.first_dev_entry.insert(0, "50")
         self.first_dev_entry.grid(row=2, column=1, sticky="w")
 
-        ctk.CTkLabel(fdn_frame, text="Rozrzut mean free path [%]:    ").grid(row=3, column=0, sticky="w", pady=5)
+        ctk.CTkLabel(fdn_frame, text="Rozrzut średniej drogi swobodnej [%]:    ").grid(row=3, column=0, sticky="w", pady=5)
         self.mfp_dev_entry = ctk.CTkEntry(fdn_frame, width=80)
         self.mfp_dev_entry.insert(0, "10")
         self.mfp_dev_entry.grid(row=3, column=1, sticky="w")
@@ -2850,14 +2850,14 @@ class SettingsPage(ctk.CTkFrame):
             ctk.CTkEntry(r, textvariable=var, width=120).pack(side="left")
             return r
 
-        _row("Direct tail po peaku [ms]:", self.hrtf_direct_tail_var)
-        _row("Early reflections długość [ms]:", self.hrtf_early_ms_var)
-        _row("Crossfade Hann [ms]:", self.hrtf_crossfade_ms_var)
-        _row("Early spread azymutu [deg]:", self.hrtf_early_spread_var)
+        _row("Długość dźwięku bezpośredniego [ms]:", self.hrtf_direct_tail_var)
+        _row("Długość wczesnych odbić [ms]:", self.hrtf_early_ms_var)
+        _row("Czas przejściowy (okno Hanna) [ms]:", self.hrtf_crossfade_ms_var)
+        _row("Rorzut wczesnych odbić [deg]:", self.hrtf_early_spread_var)
 
-        _row("Early sources (liczba kierunków):", self.hrtf_early_sources_var)
-        _row("Late sources (liczba kierunków):", self.hrtf_late_sources_var)
-        _row("Late time jitter [ms]:", self.hrtf_late_time_jitter_var)
+        _row("Źródła wczesnych odbić (liczba kierunków):", self.hrtf_early_sources_var)
+        _row("Źródła późnego pogłosu (liczba kierunków):", self.hrtf_late_sources_var)
+        _row("Rozrzut czasowy późnego pogłosu [ms]:", self.hrtf_late_time_jitter_var)
 
     # =====================================================================
     # --- DEVICE HANDLING (jak wcześniej) ---
@@ -3101,12 +3101,12 @@ class SettingsPage(ctk.CTkFrame):
                 self.input_monitor = InputMonitor(self.meter_bar, in_idx,
                                                   samplerate=int(self.sample_rate_combo.get()))
                 self.input_monitor.start()
-                self.meter_btn.configure(text="Stop input meter")
+                self.meter_btn.configure(text="Zatrzymaj miernik urządzeń wejścia")
             else:
                 self.input_monitor.stop()
-                self.meter_btn.configure(text="Start input meter")
+                self.meter_btn.configure(text="Wystartuj miernik urządzeń wejścia")
         except Exception as e:
-            show_error(f"Nie udało się uruchomić input metera.\n\nSzczegóły:\n{e}")
+            show_error(f"Nie udało się uruchomić miernika urządzeń wejścia.\n\nSzczegóły:\n{e}")
 
     # =====================================================================
     # --- HELPERS ---
