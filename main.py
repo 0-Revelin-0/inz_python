@@ -1371,7 +1371,7 @@ class MeasurementPage(ctk.CTkFrame):
         self.measure_mode_var = ctk.StringVar(value="single")
 
         self.mode_single = ctk.CTkRadioButton(
-            left, text="Pojedyńczy sweep",
+            left, text="Pojedynczy sweep",
             variable=self.measure_mode_var, value="single",
             command=self._on_mode_change
         )
