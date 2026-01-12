@@ -3775,9 +3775,11 @@ class EasyIResponseApp(ctk.CTk):
 
     def __init__(self):
         super().__init__()
+        #self.iconbitmap(resource_path("assets/icon_bar.ico"))
         self.anim_after_id = None
 
         self.hrtf_db_path = ""
+
 
 
         # Okno
