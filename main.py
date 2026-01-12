@@ -2621,7 +2621,7 @@ class SettingsPage(ctk.CTkFrame):
 
         # Test tone
         ctk.CTkLabel(frame, text="Test urządzeń wyjścia:").grid(row=9, column=0, padx=10, pady=10, sticky="w")
-        self.test_btn = ctk.CTkButton(frame, text="Częstotliwość testowa (1 kHz)", command=self._play_test)
+        self.test_btn = ctk.CTkButton(frame, text="Generowanie częstotliwości testowej (1 kHz)", command=self._play_test)
         self.test_btn.grid(row=9, column=1, padx=10, pady=15, sticky="w")
 
         # Załaduj listę wejść/wyjść
@@ -2855,8 +2855,8 @@ class SettingsPage(ctk.CTkFrame):
         _row("Czas przejściowy (okno Hanna) [ms]:", self.hrtf_crossfade_ms_var)
         _row("Rorzut wczesnych odbić [deg]:", self.hrtf_early_spread_var)
 
-        _row("Źródła wczesnych odbić (liczba kierunków):", self.hrtf_early_sources_var)
-        _row("Źródła późnego pogłosu (liczba kierunków):", self.hrtf_late_sources_var)
+        _row("Liczba źródeł wczesnych odbić (liczba kierunków):", self.hrtf_early_sources_var)
+        _row("Liczba źródeł późnego pogłosu (liczba kierunków):", self.hrtf_late_sources_var)
         _row("Rozrzut czasowy późnego pogłosu [ms]:", self.hrtf_late_time_jitter_var)
 
     # =====================================================================
@@ -3353,7 +3353,7 @@ class AboutPage(ctk.CTkFrame):
         # ------------------ Wersja aplikacji ------------------
         version_label = ctk.CTkLabel(
             self,
-            text="Wersja aplikacji: v1.1",
+            text="Wersja aplikacji: v3.4.11",
             font=("Roboto", 15),
             text_color="#cccccc"
         )
@@ -3384,8 +3384,8 @@ class AboutPage(ctk.CTkFrame):
         tabs.add("Instrukcja generowania IR")
         tabs.add("Instrukcja splotu IR z audio")
         tabs.add("Kalibracja SPL")
-        tabs.add("O autorze")
         tabs.add("Informacje techniczne")
+        tabs.add("O autorze")
 
         def add_section(frame, title, text):
             # Tytuł sekcji
@@ -3415,15 +3415,29 @@ class AboutPage(ctk.CTkFrame):
         # ======================================================
 
         opis = (
-            "Easy IResponse to aplikacja desktopowa do pracy z odpowiedzią impulsową (IR) w akustyce i audio. "
-            "Program łączy trzy główne obszary pracy:\n\n"
-            "1) Pomiar IR metodą ESS (Exponential Sine Sweep) z dekonwolucją w domenie częstotliwości,\n"
-            "2) Syntezę IR na podstawie geometrii pomieszczenia oraz pochłaniania w pasmach oktawowych,\n"
-            "3) Splot (konwolucję) dowolnego pliku audio z wybraną IR (mono lub stereo).\n\n"
-            "Aplikacja obsługuje pomiary MONO i STEREO (Input L / Input R) oraz tryb uśredniania wielu sweepów "
-            "poprawiający stosunek sygnał/szum (SNR). Wyniki można zapisać do plików WAV oraz analizować "
-            "na wykresach w czasie i w paśmie."
+            "Easy IResponse to aplikacja przeznaczona do pomiaru, generowania oraz praktycznego wykorzystania "
+            "odpowiedzi impulsowej (IR) w akustyce i przetwarzaniu dźwięku.\n\n"
+
+            "Program umożliwia wykonanie pełnego procesu pracy z IR w jednym środowisku:\n"
+            "• pomiar odpowiedzi impulsowej pomieszczenia lub toru audio,\n"
+            "• syntezę sztucznej IR na podstawie parametrów pomieszczenia,\n"
+            "• zastosowanie IR do dowolnego nagrania audio metodą splotu (konwolucji).\n\n"
+
+            "Aplikacja została zaprojektowana jako narzędzie użytkowe. "
+            "Nie wymaga specjalistycznej wiedzy z zakresu DSP – "
+            "wszystkie etapy pracy są jasno rozdzielone i prowadzą użytkownika krok po kroku.\n\n"
+
+            "Program sprawdzi się zarówno do szybkich testów akustycznych, jak i do bardziej świadomej pracy "
+            "z pogłosem konwolucyjnym, auralizacją wnętrz oraz odsłuchem binauralnym.\n\n"
+
+            "Typowy sposób pracy z programem wygląda następująco:\n"
+            "1) konfigurujesz urządzenia audio,\n"
+            "2) mierzysz IR lub generujesz ją syntetycznie,\n"
+            "3) analizujesz wykresy i charakterystykę częstotliwościową,\n"
+            "4) używasz IR do splotu z plikiem audio,\n"
+            "5) odsłuchujesz wynik i zapisujesz gotowy plik WAV."
         )
+
         add_section(tabs.tab("Opis programu"), "Opis programu", opis)
 
         # ======================================================
@@ -3431,20 +3445,59 @@ class AboutPage(ctk.CTkFrame):
         # ======================================================
 
         funkcje = (
-            "• Pomiar IR metodą ESS (Exponential Sine Sweep)\n"
-            "• Tryby pomiarowe: SINGLE (pojedynczy sweep) oraz AVERAGE (uśrednianie wielu sweepów – metoda Fariny)\n"
-            "• MONO i STEREO: jednoczesny zapis IR dla dwóch kanałów (Input L / Input R)\n"
-            "• Dekonwolucja FFT: recorded × inverse_sweep (z osobnym trybem dekonwolucji całego nagrania przy averaging)\n"
-            "• Wspólna normalizacja kanałów w stereo (zachowanie relacji L/R – ważne np. dla HRTF)\n"
-            "• Charakterystyka amplitudowa z IR + wygładzanie (fractional-octave smoothing)\n"
-            "• Generator IR: wczesne odbicia (model FDN/ray) + późny pogłos (filtrowany szum)\n"
-            "• Pochłanianie w 8 pasmach oktawowych: 125 Hz – 16 kHz (osobno: ściany / sufit / podłoga)\n"
-            "• T60 liczone w pasmach metodą Sabine’a na podstawie geometrii i pochłaniania\n"
-            "• Splot audio: konwolucja FFT + RMS matching (wyrównanie głośności pogłosu do sygnału suchego)\n"
-            "• Wet/Dry z logarytmiczną krzywą + limiter zabezpieczający przed przesterem\n"
-            "• Kalibracja SPL: generator różowego szumu + pomiar RMS/Peak wejścia w czasie rzeczywistym\n"
-            "• Eksport WAV (32-bit float) – nagrania i IR"
+            "POMIAR ODPOWIEDZI IMPULSOWEJ (IR):\n"
+            "Program generuje sygnał testowy typu sweep (zmienna częstotliwość w czasie), "
+            "odtwarza go na wyjściu audio i jednocześnie nagrywa odpowiedź z wejścia.\n"
+            "Na podstawie nagrania wyliczana jest odpowiedź impulsowa (IR), "
+            "która opisuje zachowanie akustyczne pomieszczenia lub toru audio.\n\n"
+
+            "Dostępne tryby pomiaru:\n"
+            "• SINGLE – pojedynczy pomiar, szybki i prosty,\n"
+            "• AVERAGE – kilka kolejnych pomiarów, które są uśredniane w celu redukcji szumu.\n\n"
+
+            "Pomiar może być wykonany w trybie MONO lub STEREO:\n"
+            "• w trybie MONO rejestrowany jest jeden kanał wejściowy,\n"
+            "• w trybie STEREO rejestrowane są dwa kanały jednocześnie (L i R), "
+            "a program pilnuje synchronizacji czasowej i relacji poziomów.\n\n"
+
+            "ANALIZA WYNIKU:\n"
+            "Po pomiarze program automatycznie wyświetla:\n"
+            "• wykres odpowiedzi impulsowej w dziedzinie czasu,\n"
+            "• charakterystykę częstotliwościową obliczoną z IR.\n"
+            "Dostępne jest wygładzanie charakterystyki, "
+            "które ułatwia ocenę ogólnego balansu częstotliwościowego pomieszczenia.\n\n"
+
+            "GENERATOR IR (SYNTEZA):\n"
+            "Program umożliwia wygenerowanie odpowiedzi impulsowej bez użycia mikrofonu.\n"
+            "IR jest tworzona na podstawie:\n"
+            "• wymiarów pomieszczenia,\n"
+            "• pochłaniania ścian, sufitu i podłogi w pasmach oktawowych,\n"
+            "• parametrów opisujących wczesne odbicia oraz pogłos.\n\n"
+
+            "Wygenerowana IR zawiera:\n"
+            "• dźwięk bezpośredni,\n"
+            "• wczesne odbicia (odpowiedzialne za czytelność i lokalizację),\n"
+            "• późny pogłos (odpowiedzialny za wrażenie przestrzeni).\n\n"
+
+            "SPLOT AUDIO:\n"
+            "Moduł splotu pozwala nałożyć IR na dowolny plik WAV.\n"
+            "Program automatycznie:\n"
+            "• dopasowuje głośność efektu do sygnału oryginalnego,\n"
+            "• umożliwia płynną regulację proporcji Wet/Dry,\n"
+            "• normalizuje wynik do bezpiecznego poziomu,\n"
+            "• zabezpiecza sygnał przed przesterowaniem.\n\n"
+
+            "HRTF (ODSŁUCH PRZESTRZENNY):\n"
+            "W trybie mono możliwe jest włączenie HRTF, "
+            "czyli odsłuchu binauralnego przeznaczonego do słuchawek.\n"
+            "Użytkownik może ustawić kierunek źródła dźwięku "
+            "(prawo/lewo oraz góra/dół), uzyskując realistyczne wrażenie przestrzeni.\n\n"
+
+            "KALIBRACJA I TEST TORU:\n"
+            "Program zawiera generator różowego szumu oraz miernik poziomu wejścia. "
+            "Pozwala to szybko ustawić bezpieczny i powtarzalny poziom sygnału przed pomiarem IR."
         )
+
         add_section(tabs.tab("Funkcjonalności"), "Funkcjonalności", funkcje)
 
         # ======================================================
@@ -3452,22 +3505,38 @@ class AboutPage(ctk.CTkFrame):
         # ======================================================
 
         instrukcja = (
-            "1. Wybierz urządzenia audio: Output (odtwarzanie) i Input (nagranie).\n"
-            "2. Ustaw Sample Rate oraz Buffer Size.\n"
-            "3. Wybierz tryb MONO lub STEREO (Input L / Input R).\n"
-            "4. Ustaw parametry sweepa: start_freq, end_freq oraz sweep_length.\n"
-            "5. Ustaw IR length:\n"
-            "   • w trybie SINGLE – dowolna (zwykle większa niż czas pogłosu),\n"
-            "   • w trybie AVERAGE – IR length jest automatycznie wymuszona na sweep_length.\n"
-            "6. (Opcjonalnie) Włącz uśrednianie: wybierz tryb AVERAGE i ustaw liczbę uśrednień (>=2).\n"
-            "   Program odtworzy kilka sweepów sklejonych próbka-do-próbki, wykona dekonwolucję całości,\n"
-            "   wytnie kolejne bloki IR (pierwszy blok jest odrzucany) i uśredni wynik.\n"
-            "7. Kliknij START, wykonaj pomiar, a następnie zapisz wyniki.\n\n"
-            "Zapisywane pliki (przykładowo):\n"
-            "• RECORDED_L_*.wav / RECORDED_R_*.wav – surowe nagranie wejścia\n"
-            "• IR_L_*.wav / IR_R_*.wav – odpowiedź impulsowa\n\n"
-            "Wykresy: IR w czasie oraz charakterystyka amplitudowa (z opcjonalnym smoothingiem)."
+            "Pomiar IR pozwala zapisać akustyczną odpowiedź pomieszczenia lub toru audio.\n\n"
+
+            "KROK 1 – Konfiguracja:\n"
+            "• wybierz urządzenie wejściowe (mikrofon / interfejs),\n"
+            "• wybierz urządzenie wyjściowe (głośniki),\n"
+            "• ustaw częstotliwość próbkowania i bufor,\n"
+            "• wybierz tryb pomiaru: MONO lub STEREO.\n\n"
+
+            "KROK 2 – Ustawienie poziomu:\n"
+            "Zalecane jest uruchomienie różowego szumu przed pomiarem.\n"
+            "Ustaw poziom tak, aby sygnał był wyraźny, "
+            "ale nie powodował przesterowania wejścia.\n\n"
+
+            "KROK 3 – Parametry pomiaru:\n"
+            "• długość sweepa – dłuższy sweep daje lepszy stosunek sygnał/szum,\n"
+            "• zakres częstotliwości – określa pasmo analizy,\n"
+            "• długość IR – ile czasu odpowiedzi po impulsie zostanie zapisane.\n\n"
+
+            "KROK 4 – Tryb pomiaru:\n"
+            "• SINGLE – szybki pomiar kontrolny,\n"
+            "• AVERAGE – kilka pomiarów uśrednianych dla lepszej jakości.\n\n"
+
+            "KROK 5 – Start:\n"
+            "Po kliknięciu „Start pomiaru” należy zachować ciszę "
+            "do momentu zakończenia sygnału testowego.\n\n"
+
+            "Po zakończeniu pomiaru:\n"
+            "• program automatycznie oblicza IR,\n"
+            "• wyświetlany jest wykres odpowiedzi impulsowej,\n"
+            "• IR jest gotowa do użycia w module splotu."
         )
+
         add_section(tabs.tab("Instrukcja pomiaru"), "Instrukcja pomiaru IR", instrukcja)
 
         # ======================================================
@@ -3475,23 +3544,29 @@ class AboutPage(ctk.CTkFrame):
         # ======================================================
 
         gen_instr = (
-            "Generator tworzy syntetyczną IR z trzech składników: dźwięk bezpośredni (impuls), "
-            "wczesne odbicia oraz późny pogłos.\n\n"
-            "1. W zakładce ustawień generatora podaj wymiary pomieszczenia (W, L, H) w metrach.\n"
-            "2. Ustaw pochłanianie w 8 pasmach oktawowych (125–16k Hz) osobno dla: ścian, sufitu i podłogi.\n"
-            "3. Ustaw parametry modelu wczesnych odbić (FDN):\n"
-            "   • liczba promieni (Rays),\n"
-            "   • liczba odbić na promień (Reflections),\n"
-            "   • rozrzut pierwszego odbicia [%],\n"
-            "   • rozrzut mean free path [%].\n"
-            "4. Na stronie Generator ustaw długość IR oraz proporcję Early/Late (suwak).\n"
-            "5. Kliknij GENERUJ i zapisz wynik do WAV.\n\n"
-            "Jak to działa w skrócie:\n"
-            "• T60 liczone jest metodą Sabine’a w pasmach oktawowych na podstawie geometrii i pochłaniania.\n"
-            "• Późny pogłos: biały szum filtrowany bankiem pasm oktawowych + obwiednia zaniku 10^(-3·t/T60).\n"
-            "• Wczesne odbicia: losowany rozkład czasów (na bazie MFP) i tłumień – suma impulsów w czasie.\n"
-            "• Całość jest normalizowana globalnie do max=1."
+            "Generator IR umożliwia stworzenie odpowiedzi impulsowej bez wykonywania pomiaru mikrofonem.\n\n"
+
+            "KROK 1 – Geometria pomieszczenia:\n"
+            "Podaj szerokość, długość i wysokość pomieszczenia w metrach.\n\n"
+
+            "KROK 2 – Materiały:\n"
+            "Ustaw współczynniki pochłaniania dla ścian, sufitu i podłogi "
+            "w poszczególnych pasmach częstotliwości.\n"
+            "Możesz wprowadzić wartości ręcznie lub skorzystać z gotowych presetów.\n\n"
+
+            "KROK 3 – Charakter pogłosu:\n"
+            "Ustaw parametry wczesnych odbić oraz proporcję pomiędzy "
+            "wczesnymi odbiciami a późnym pogłosem.\n\n"
+
+            "KROK 4 – Generowanie:\n"
+            "Kliknij „Generuj IR”. Program wygeneruje plik WAV, "
+            "który możesz odsłuchać lub użyć w module splotu.\n\n"
+
+            "Generator pozwala szybko sprawdzić wpływ "
+            "wielkości pomieszczenia, materiałów i ilości odbić "
+            "na charakter dźwięku."
         )
+
         add_section(tabs.tab("Instrukcja generowania IR"), "Instrukcja generowania IR", gen_instr)
 
         # ======================================================
@@ -3499,18 +3574,28 @@ class AboutPage(ctk.CTkFrame):
         # ======================================================
 
         conv_instr = (
-            "1. Wybierz plik audio (WAV) do przetworzenia.\n"
-            "2. Wybierz tryb:\n"
-            "   • Mono – jedna IR (stosowana do kanału mono lub do obu kanałów stereo),\n"
-            "   • Stereo – osobne IR Left i IR Right.\n"
-            "3. Ustaw Wet/Dry (suwak ma logarytmiczną krzywą odczuwalności).\n"
-            "4. Wybierz ścieżkę zapisu i uruchom splot.\n\n"
-            "W silniku splotu:\n"
-            "• Konwolucja wykonywana jest w domenie częstotliwości (FFT).\n"
-            "• IR jest downmixowana do mono (jeśli w pliku ma 2 kanały), a następnie normalizowana.\n"
-            "• RMS matching dopasowuje głośność kanału „wet” do głośności sygnału „dry”.\n"
-            "• Na końcu działa limiter (jeśli peak > 1.0, sygnał jest skalowany)."
+            "Splot audio umożliwia nadanie nagraniu charakteru wybranego pomieszczenia.\n\n"
+
+            "KROK 1 – Wybór plików:\n"
+            "• wybierz plik audio (WAV mono lub stereo),\n"
+            "• wybierz odpowiednią IR (mono lub zestaw stereo).\n\n"
+
+            "KROK 2 – Regulacja efektu:\n"
+            "Suwak Wet/Dry ustala ilość pogłosu względem sygnału oryginalnego. "
+            "Regulacja została zaprojektowana tak, aby była naturalna i łatwa w kontroli.\n\n"
+
+            "KROK 3 – HRTF (opcjonalnie):\n"
+            "W trybie mono możesz włączyć HRTF i ustawić kierunek źródła dźwięku. "
+            "Efekt przeznaczony jest do odsłuchu na słuchawkach.\n\n"
+
+            "KROK 4 – Odsłuch i zapis:\n"
+            "• użyj podglądu, aby sprawdzić efekt bez zapisywania pliku,\n"
+            "• zapisz wynik do pliku WAV, gdy efekt jest satysfakcjonujący.\n\n"
+
+            "Program automatycznie dba o poziomy sygnału "
+            "i zabezpiecza wynik przed przesterowaniem."
         )
+
         add_section(tabs.tab("Instrukcja splotu IR z audio"), "Instrukcja splotu IR z sygnałem audio", conv_instr)
 
         # ======================================================
@@ -3518,15 +3603,22 @@ class AboutPage(ctk.CTkFrame):
         # ======================================================
 
         spl_instr = (
-            "Zakładka kalibracji SPL służy do ustawienia poziomów odsłuchu/nagrania w kontrolowany sposób.\n\n"
-            "1. Wybierz urządzenia audio (Output i Input) oraz sample rate/buffer.\n"
-            "2. Uruchom generator różowego szumu (pink noise) na wyjściu.\n"
-            "3. Monitor wejścia pokazuje RMS i Peak w dBFS w czasie rzeczywistym.\n"
-            "4. Na podstawie wskazań ustaw gain na interfejsie/monitorach tak, aby uzyskać bezpieczny poziom "
-            "i uniknąć przesteru.\n\n"
-            "Uwaga: monitor pokazuje poziom w dBFS (cyfrowy), nie w dBSPL – do pełnej kalibracji SPL potrzebny jest "
-            "zewnętrzny miernik SPL i wyznaczenie odniesienia."
+            "Kalibracja umożliwia ustawienie poprawnego poziomu sygnału przed pomiarem IR.\n\n"
+
+            "Jak korzystać:\n"
+            "• uruchom generator różowego szumu,\n"
+            "• obserwuj poziomy RMS i Peak wejścia,\n"
+            "• dostosuj gain, aby uniknąć przesterowania.\n\n"
+
+            "Ważne informacje:\n"
+            "• program pokazuje poziomy w dBFS (poziom cyfrowy),\n"
+            "• nie jest to bezpośredni pomiar poziomu SPL,\n"
+            "• do dokładnej kalibracji SPL wymagany jest zewnętrzny miernik.\n\n"
+
+            "Kalibracja nie jest obowiązkowa, "
+            "ale znacząco poprawia jakość i powtarzalność pomiarów."
         )
+
         add_section(tabs.tab("Kalibracja SPL"), "Kalibracja (pink noise + monitor wejścia)", spl_instr)
 
         # ======================================================
@@ -3534,13 +3626,16 @@ class AboutPage(ctk.CTkFrame):
         # ======================================================
 
         autor = (
+
+            "„Easy IResponse – Aplikacja do pomiaru i syntezy odpowiedzi impulsowej pomieszczeń na potrzeby auralizacji wnętrz\n\n"
+
             "Autor: Oskar Racułt\n"
             "Kierunek: Inżynieria Akustyczna\n"
-            "Wydział Inżynierii Mechanicznej i Robotyki, Akademia Górniczo-Hutnicza w Krakowie\n\n"
-            "Aplikacja opracowana jako część pracy inżynierskiej pt.:\n"
-            "„Easy IResponse – Aplikacja do pomiaru i syntezy odpowiedzi impulsowej pomieszczeń "
-            "na potrzeby auralizacji wnętrz”."
+            "Akademia Górniczo-Hutnicza w Krakowie\n\n"
+            "Program został stworzony jako część pracy inżynierskiej "
+            "i łączy wiedzę akademicką z praktycznymi zastosowaniami w realizacji dźwięku."
         )
+
         add_section(tabs.tab("O autorze"), "O autorze", autor)
 
         # ======================================================
@@ -3548,17 +3643,65 @@ class AboutPage(ctk.CTkFrame):
         # ======================================================
 
         techniczne = (
-            "• measurement_engine.py: sweep ESS (fade-in/fade-out ~5 ms), inverse filter (Farina), play/rec, "
-            "dekonwolucja (FFT) i smoothing\n"
-            "• synthesis_engine.py: synteza IR (Sabine w pasmach oktawowych 125–16k Hz, MFP, wczesne odbicia + późny pogłos)\n"
-            "• convolution_engine.py: FFT convolution, downmix IR, normalizacja, RMS matching, logarytmiczny wet/dry, limiter\n"
-            "• spl_calibration.py: pink noise + monitor RMS/Peak na wejściu\n\n"
-            "Dane/formaty:\n"
-            "• WAV 32-bit float (nagrania i IR)\n"
-            "• Wspólna normalizacja kanałów stereo (jeden współczynnik)\n"
-            "• Averaging: sklejone sweepy + dekonwolucja całości + wycinanie bloków IR (pierwszy blok odrzucany)\n\n"
-            "Biblioteki: numpy, sounddevice, soundfile, matplotlib, customtkinter."
+            "Ten program działa modułowo – interfejs użytkownika steruje niezależnymi silnikami "
+            "odpowiedzialnymi za pomiar, syntezę IR, splot audio oraz HRTF.\n\n"
+
+            "POMIAR IR:\n"
+            "• Do pomiaru wykorzystywana jest metoda ESS (Exponential Sine Sweep).\n"
+            "• Program generuje sweep wykładniczy o zadanej długości i zakresie częstotliwości.\n"
+            "• Sweep posiada krótki fade-in i fade-out, aby ograniczyć trzaski na początku i końcu sygnału.\n"
+            "• Po nagraniu odpowiedzi wykonywana jest dekonwolucja w dziedzinie częstotliwości (FFT).\n"
+            "• IR jest wycinana względem największego piku (dźwięk bezpośredni).\n"
+            "• W trybie stereo wspólny punkt startowy IR jest liczony z najwcześniejszego piku, "
+            "  aby zachować poprawną synchronizację kanałów L/R.\n"
+            "• W trybie AVERAGE kilka sweepów jest sklejanych w jedno nagranie, "
+            "  a następnie IR jest liczona i uśredniana blokowo.\n\n"
+
+            "ANALIZA I WYKRESY:\n"
+            "• Odpowiedź impulsowa jest wyświetlana w dziedzinie czasu w oknie wokół piku.\n"
+            "• Charakterystyka częstotliwościowa liczona jest z FFT IR.\n"
+            "• Dostępne wygładzanie (1/24 – 1/3 oktawy) ma charakter wizualny i nie modyfikuje IR.\n\n"
+
+            "SYNTETYCZNA IR:\n"
+            "• Generator IR opiera się na uproszczonym modelu statystycznym pomieszczenia.\n"
+            "• Na podstawie wymiarów pomieszczenia obliczana jest objętość i średnia droga swobodna.\n"
+            "• Czas pogłosu (T60) wyznaczany jest osobno w 8 pasmach oktawowych.\n"
+            "• Wczesne odbicia generowane są jako losowe impulsy o narastającym opóźnieniu i malejącej energii.\n"
+            "• Późny pogłos tworzony jest z szumu filtrowanego pasmowo i wygaszanego w czasie.\n"
+            "• Suwak Early/Late steruje proporcją energii pomiędzy wczesnymi odbiciami a ogonem pogłosowym.\n\n"
+
+            "SPLOT AUDIO:\n"
+            "• Splot wykonywany jest w dziedzinie częstotliwości (FFT), "
+            "  co pozwala na szybkie przetwarzanie długich odpowiedzi impulsowych.\n"
+            "• Program automatycznie dopasowuje długość sygnałów do potęg dwójki, "
+            "  aby zoptymalizować działanie FFT.\n"
+            "• Regulacja Wet/Dry wykorzystuje nieliniową krzywą, "
+            "  dzięki czemu zmiany są bardziej naturalne w odsłuchu.\n"
+            "• Głośność pogłosu jest dopasowywana do sygnału suchego (RMS matching).\n"
+            "• Końcowy sygnał jest normalizowany do bezpiecznego poziomu i zabezpieczony limiterem.\n\n"
+
+            "HRTF – ODSŁUCH BINAURALNY:\n"
+            "• HRTF działa wyłącznie w trybie splotu MONO i przeznaczony jest do odsłuchu na słuchawkach.\n"
+            "• Baza HRTF wczytywana jest z pliku .mat i musi mieć zgodną częstotliwość próbkowania.\n"
+            "• Program wybiera najbliższą pozycję kątową (azymut i elewacja).\n"
+            "• IR mono jest dzielona na segmenty: direct, early i late.\n"
+            "• Każdy segment jest binauralizowany oddzielnie, "
+            "  co poprawia stabilność lokalizacji i wrażenie przestrzeni.\n"
+            "• Dla wczesnych odbić i pogłosu stosowany jest rozrzut kierunków, "
+            "  aby uniknąć wrażenia punktowego źródła.\n\n"
+
+            "KALIBRACJA I TEST TORU:\n"
+            "• Różowy szum generowany jest programowo i odtwarzany w pętli.\n"
+            "• Program mierzy poziom RMS i Peak wejścia w dBFS w czasie rzeczywistym.\n"
+            "• Funkcja ta służy wyłącznie do ustawienia bezpiecznego poziomu toru "
+            "  i nie jest pełną kalibracją SPL.\n\n"
+
+            "FORMATY I OGRANICZENIA:\n"
+            "• Pliki audio zapisywane są w formacie WAV (32-bit float).\n"
+            "• Program nie wykonuje korekcji opóźnień sprzętowych interfejsu audio.\n"
+            "• Dokładność pomiaru IR zależy od jakości mikrofonu, interfejsu i warunków pomieszczenia."
         )
+
         add_section(tabs.tab("Informacje techniczne"), "Informacje techniczne", techniczne)
 
 
