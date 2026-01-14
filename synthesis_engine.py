@@ -218,7 +218,9 @@ def generate_early_reflections(fs, duration_s,
         M = np.zeros(int(reflections_no), dtype=np.int64)
 
         M[0] = r_first
-        k[0] = (1.0 - a)  # amplituda pierwszego odbicia to współczynnik odbicia
+        # losowy znak dla pierwszego odbicia (+1 lub -1)
+        sign0 = -1.0 if rng.random() < 0.5 else 1.0
+        k[0] = sign0 * (1.0 - a)
 
         for i in range(1, int(reflections_no)):
             r = int(np.floor(rng.normal(mfp_samples, mfp_dev_samples))) # długość kolejnej drogi w próbkach, losowana wokół mfp
@@ -228,7 +230,9 @@ def generate_early_reflections(fs, duration_s,
             a = float(rng.normal(alpha, alpha_dev))
             a = float(np.clip(a, 0.0, 0.99)) # ograniczenie od 0 do 0,99
 
-            k[i] = k[i - 1] * (1.0 - a) # amplituda kolejnego odbicia = poprzednia amplituda * współczynnik odbicia
+            # losowy znak dla każdego kolejnego odbicia
+            signi = -1.0 if rng.random() < 0.5 else 1.0
+            k[i] = signi * k[i - 1] * (1.0 - a) # amplituda kolejnego odbicia = poprzednia amplituda * współczynnik odbicia
             M[i] = M[i - 1] + r  # czas w próbkach kolejnego odbicia, czyli poprzedni czas + czas kolejnej droga
 
         # Dodanie wygenerowanej linii odbić do sumarycznego sygnału

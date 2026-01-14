@@ -1089,7 +1089,7 @@ class ConvolutionPage(ctk.CTkFrame):
                     0,
                     lambda: (
                         self.status_label.configure(
-                            text=f"Splot zakończony.\nZapisano: {os.path.basename(out_file)}"
+                            text=f"Splot zakończony"
                         ),
                         self.start_button.configure(state="normal"),
                         self.update_plots(),
@@ -2907,8 +2907,8 @@ class SettingsPage(ctk.CTkFrame):
         _row("Czas przejściowy (okno Hanna) [ms]:", self.hrtf_crossfade_ms_var)
         _row("Rorzut wczesnych odbić [deg]:", self.hrtf_early_spread_var)
 
-        _row("Liczba źródeł wczesnych odbić (liczba kierunków):", self.hrtf_early_sources_var)
-        _row("Liczba źródeł późnego pogłosu (liczba kierunków):", self.hrtf_late_sources_var)
+        _row("Liczba źródeł wczesnych odbić:", self.hrtf_early_sources_var)
+        _row("Liczba źródeł późnego pogłosu:", self.hrtf_late_sources_var)
         _row("Rozrzut czasowy późnego pogłosu [ms]:", self.hrtf_late_time_jitter_var)
 
     # =====================================================================
@@ -3534,8 +3534,8 @@ class AboutPage(ctk.CTkFrame):
             "która opisuje zachowanie akustyczne pomieszczenia lub toru audio.\n\n"
 
             "Dostępne tryby pomiaru:\n"
-            "• SINGLE – pojedynczy pomiar, szybki i prosty,\n"
-            "• AVERAGE – kilka kolejnych pomiarów, które są uśredniane w celu redukcji szumu.\n\n"
+            "• Pojedynczcy sweep – pojedynczy pomiar, szybki i prosty,\n"
+            "• Uśrednianie – kilka kolejnych pomiarów, które są uśredniane w celu redukcji szumu.\n\n"
 
             "Pomiar może być wykonany w trybie MONO lub STEREO:\n"
             "• w trybie MONO rejestrowany jest jeden kanał wejściowy,\n"
