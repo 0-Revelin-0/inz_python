@@ -1686,6 +1686,7 @@ class MeasurementPage(ctk.CTkFrame):
         self.ax_mag.set_title(f"Odpowiedź częstotliwościowa ({channel_label})", color="white")
         self.ax_mag.set_xlabel("Częstotliwość [Hz]", color="white")
         self.ax_mag.set_ylabel("Poziom [dB]", color="white")
+        self.ax_mag.set_xscale("log")
 
         smoothing = self.controller.get_smoothing_fraction()
 
@@ -2068,6 +2069,9 @@ class GeneratorPage(ctk.CTkFrame):
         super().__init__(parent)
         self.controller = controller
 
+        self.last_gen_freqs = None
+        self.last_gen_mag_db = None
+
         # -------------------------------------------------
         # GŁÓWNY UKŁAD – identyczny jak w MeasurementPage
         # -------------------------------------------------
@@ -2270,6 +2274,56 @@ class GeneratorPage(ctk.CTkFrame):
 
         self.canvas.draw()
 
+    def redraw_mag_plot(self):
+        """
+        Przerysowuje Magnitude dla ostatnio wygenerowanej IR,
+        z aktualnym smoothingiem generatora (oddzielnym od pomiaru).
+        """
+        if self.last_gen_freqs is None or self.last_gen_mag_db is None:
+            return
+
+        freqs = np.asarray(self.last_gen_freqs)
+        mag_db = np.asarray(self.last_gen_mag_db)
+
+        smoothing = self.controller.get_generator_smoothing_fraction()
+
+        try:
+            if smoothing is None:
+                mag_plot = mag_db
+            else:
+                mag_plot = smooth_mag_response(freqs, mag_db, fraction=smoothing)
+        except Exception:
+            mag_plot = mag_db
+
+        # Oś jak w _on_generate_ir_clicked (po cla() trzeba odtworzyć ustawienia)
+        self.ax_mag.cla()
+        self.ax_mag.set_facecolor("#111111")
+        self.ax_mag.grid(True, color="#444444", alpha=0.3)
+        self.ax_mag.set_title("Odpowiedź częstotliwościowa (wygenerowana)", color="white")
+        self.ax_mag.set_xlabel("Częstotliwość [Hz]", color="white")
+        self.ax_mag.set_ylabel("Poziom [dB]", color="white")
+        self.ax_mag.tick_params(colors="white")
+
+        self.ax_mag.set_xscale("log")
+        self.ax_mag.xaxis.set_major_locator(LogLocator(base=10.0))
+        self.ax_mag.xaxis.set_minor_locator(LogLocator(base=10.0, subs=np.arange(2, 10)))
+
+        formatter = ScalarFormatter()
+        formatter.set_scientific(False)
+        formatter.set_useOffset(False)
+        self.ax_mag.xaxis.set_major_formatter(formatter)
+
+        # 20–20k (tak jak masz w generatorze)
+        mask = (freqs >= 20.0) & (freqs <= 20000.0)
+        freqs_plot = freqs[mask]
+        mag_plot_limited = mag_plot[mask]
+
+        if freqs_plot.size > 0:
+            self.ax_mag.semilogx(freqs_plot, mag_plot_limited, linewidth=1.5, color="#009688")
+
+        self.ax_mag.set_xlim(20, 20000)
+        self.canvas.draw_idle()
+
     # =========================================================
     # LOGIKA GUI
     # =========================================================
@@ -2333,22 +2387,15 @@ class GeneratorPage(ctk.CTkFrame):
         except Exception as e:
             print(f"[GeneratorPage] Nie udało się zapisać IR: {e}")
 
-        # 5) Obliczenie charakterystyki amplitudowej
+        # 5) Magnitude RAW (bez smoothingu) – tylko do cache, nie do IR!
         try:
             freqs, mag_db = compute_mag_response(ir, fs)
-
-            smoothing = self.controller.get_smoothing_fraction()
-            if smoothing is None:
-                mag_plot = mag_db
-            else:
-                try:
-                    mag_plot = smooth_mag_response(freqs, mag_db, fraction=smoothing)
-                except Exception:
-                    mag_plot = mag_db
+            self.last_gen_freqs = freqs
+            self.last_gen_mag_db = mag_db
         except Exception as e:
             print(f"[GeneratorPage] Błąd liczenia magnitude: {e}")
-            freqs = None
-            mag_plot = None
+            self.last_gen_freqs = None
+            self.last_gen_mag_db = None
 
         # 6) Aktualizacja wykresów w GeneratorPage
         # ---- IR ----
@@ -2372,18 +2419,8 @@ class GeneratorPage(ctk.CTkFrame):
 
         self.ax_ir.plot(t_plot, ir_plot, linewidth=0.9, color="#4fc3f7")
 
-        # ---- MAGNITUDE ----
-        self.ax_mag.cla()
-        self.ax_mag.set_facecolor("#111111")
-        self.ax_mag.grid(True, color="#444444", alpha=0.3)
-        self.ax_mag.set_title("Odpowiedź częstotliwościowa (wygenerowana)", color="white")
-        self.ax_mag.set_xlabel("Częstotliwość [Hz]", color="white")
-        self.ax_mag.set_ylabel("Poziom [dB]", color="white")
-
-        if freqs is not None and mag_plot is not None:
-            self.ax_mag.semilogx(freqs, mag_plot, linewidth=1.5, color="#009688")
-
-        self.canvas.draw_idle()
+        # ---- MAGNITUDE (wizualnie, z smoothingiem generatora) ----
+        self.redraw_mag_plot()
 
     def _choose_output(self):
         """Wybór folderu zapisu generowanego IR."""
@@ -2684,6 +2721,21 @@ class SettingsPage(ctk.CTkFrame):
         self.gen_sample_rate_combo.set("48000")
         self.gen_sample_rate_combo.grid(row=0, column=1, sticky="w", padx=10, pady=5)
 
+        # =========================
+        # Smoothing (Generator IR) – osobno
+        # =========================
+        ctk.CTkLabel(gen_params_frame, text="Wygładzanie:").grid(
+            row=1, column=0, sticky="w", pady=5
+        )
+
+        self.gen_smoothing_combo = ctk.CTkComboBox(
+            gen_params_frame,
+            values=["Raw", "1/24", "1/12", "1/6", "1/3"],
+            command=self._on_gen_smoothing_change
+        )
+        self.gen_smoothing_combo.set("1/6")
+        self.gen_smoothing_combo.grid(row=1, column=1, padx=10, pady=5, sticky="w")
+
         # =========================================================
         # 1) GEOMETRIA POMIESZCZENIA
         # =========================================================
@@ -2879,6 +2931,26 @@ class SettingsPage(ctk.CTkFrame):
             if entry is not None:
                 entry.delete(0, "end")
                 entry.insert(0, f"{val:.2f}")
+
+    def get_generator_smoothing_fraction(self):
+
+        try:
+            v = self.gen_smoothing_combo.get()
+        except Exception:
+            v = "Raw"
+
+        if v == "Raw":
+            return None
+        if "1/24" in v:
+            return 24
+        if "1/12" in v:
+            return 12
+        if "1/6" in v:
+            return 6
+        if "1/3" in v:
+            return 3
+
+        return None
 
     def get_generator_config(self):
         """
@@ -3145,6 +3217,15 @@ class SettingsPage(ctk.CTkFrame):
             measurement_page = self.controller.pages["measurement"]
             measurement_page.update_plots()
         except:
+            pass
+
+    def _on_gen_smoothing_change(self, value):
+        # Dynamiczne przerysowanie wykresu Magnitude (GENERATOR)
+        try:
+            gen_page = self.controller.pages["generator"]
+            if hasattr(gen_page, "redraw_mag_plot"):
+                gen_page.redraw_mag_plot()
+        except Exception:
             pass
 
     def get_smoothing_fraction(self):
@@ -3715,6 +3796,10 @@ class EasyIResponseApp(ctk.CTk):
     def get_smoothing_fraction(self):
         settings_page = self.pages["settings"]
         return settings_page.get_smoothing_fraction()
+
+    def get_generator_smoothing_fraction(self):
+        settings_page = self.pages["settings"]
+        return settings_page.get_generator_smoothing_fraction()
 
     def get_mag_y_limits(self):
         settings_page = self.pages["settings"]
