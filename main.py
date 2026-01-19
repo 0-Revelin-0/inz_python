@@ -3469,6 +3469,7 @@ class AboutPage(ctk.CTkFrame):
         tabs.add("O autorze")
 
 
+
         def add_section(frame, title, text):
             # Tytuł sekcji
             title_label = ctk.CTkLabel(
