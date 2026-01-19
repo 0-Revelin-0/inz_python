@@ -1327,7 +1327,7 @@ class MeasurementPage(ctk.CTkFrame):
         left = ctk.CTkFrame(main_frame, corner_radius=12)
         left.grid(row=0, column=0, padx=15, pady=15, sticky="ns")
 
-        ctk.CTkLabel(left, text="Kalibracja SPL", font=("Arial", 18, "bold")).pack(
+        ctk.CTkLabel(left, text="Dopasowanie poziomu wejściowego", font=("Arial", 18, "bold")).pack(
             anchor="n", pady=(10, 5)
         )
 
@@ -2036,7 +2036,7 @@ class MeasurementPage(ctk.CTkFrame):
             self.pink_player = PinkNoisePlayer()
 
         self.pink_player.start(audio_cfg)
-        self.calib_status_label.configure(text="Kalibracja…", text_color="#cccccc")
+        self.calib_status_label.configure(text="Odtwarzanie…", text_color="#cccccc")
 
         # --- START CIĄGŁEGO MONITORA WEJŚCIA ---
 
@@ -2891,7 +2891,7 @@ class SettingsPage(ctk.CTkFrame):
         ).pack(side="left")
 
         # --- Parametry HRTF (IR split + fades) ---
-        ctk.CTkLabel(conv_tab, text="Podział IR i wygładzanie (HRTF)", font=("Roboto", 14, "bold")).pack(
+        ctk.CTkLabel(conv_tab, text="Parametry filtracji binauralnej HRTF", font=("Roboto", 14, "bold")).pack(
             anchor="w", padx=15, pady=(5, 5)
         )
 
@@ -3464,7 +3464,7 @@ class AboutPage(ctk.CTkFrame):
         tabs.add("Instrukcja pomiaru")
         tabs.add("Instrukcja generowania IR")
         tabs.add("Instrukcja splotu IR z audio")
-        tabs.add("Kalibracja SPL")
+        tabs.add("Dopasowanie poziomu wejściowego")
         tabs.add("Informacje techniczne")
         tabs.add("O autorze")
 
@@ -3575,7 +3575,7 @@ class AboutPage(ctk.CTkFrame):
             "Użytkownik może ustawić kierunek źródła dźwięku "
             "(prawo/lewo oraz góra/dół), uzyskując realistyczne wrażenie przestrzeni.\n\n"
 
-            "KALIBRACJA I TEST TORU:\n"
+            "Dopasowanie poziomów i test toru:\n"
             "Program zawiera generator różowego szumu oraz miernik poziomu wejścia. "
             "Pozwala to szybko ustawić bezpieczny i powtarzalny poziom sygnału przed pomiarem IR."
         )
@@ -3685,7 +3685,7 @@ class AboutPage(ctk.CTkFrame):
         # ======================================================
 
         spl_instr = (
-            "Kalibracja umożliwia ustawienie poprawnego poziomu sygnału przed pomiarem IR.\n\n"
+            "Dopasowanie poziomu umożliwia ustawienie poprawnego poziomu sygnału przed pomiarem IR.\n\n"
 
             "Jak korzystać:\n"
             "• uruchom generator różowego szumu,\n"
@@ -3695,13 +3695,13 @@ class AboutPage(ctk.CTkFrame):
             "Ważne informacje:\n"
             "• program pokazuje poziomy w dBFS (poziom cyfrowy),\n"
             "• nie jest to bezpośredni pomiar poziomu SPL,\n"
-            "• do dokładnej kalibracji SPL wymagany jest zewnętrzny miernik.\n\n"
+            "• do dokładnej dopasowaniu poziomu wymagany jest zewnętrzny miernik.\n\n"
 
-            "Kalibracja nie jest obowiązkowa, "
+            "Dopasowanie poziomu nie jest obowiązkowa, "
             "ale znacząco poprawia jakość i powtarzalność pomiarów."
         )
 
-        add_section(tabs.tab("Kalibracja SPL"), "Kalibracja (pink noise + monitor wejścia)", spl_instr)
+        add_section(tabs.tab("Dopasowanie poziomu wejściowego"), "Dopasowanie poziomu (pink noise + monitor wejścia)", spl_instr)
 
         # ======================================================
         # 7) O AUTORZE
@@ -3772,7 +3772,7 @@ class AboutPage(ctk.CTkFrame):
             "• Dla wczesnych odbić i pogłosu stosowany jest rozrzut kierunków, "
             "  aby uniknąć wrażenia punktowego źródła.\n\n"
 
-            "KALIBRACJA I TEST TORU:\n"
+            "DOPASOWANIE POZIOMU I TEST TORU:\n"
             "• Różowy szum generowany jest programowo i odtwarzany w pętli.\n"
             "• Program mierzy poziom RMS i Peak wejścia w dBFS w czasie rzeczywistym.\n"
             "• Funkcja ta służy wyłącznie do ustawienia bezpiecznego poziomu toru "
@@ -3869,7 +3869,7 @@ class EasyIResponseApp(ctk.CTk):
 
         # Okno
         self.title("Easy IResponse")
-        self.geometry("1300x800")
+        self.geometry("1400x870")
         self.minsize(900, 550)
         self.resizable(False, False)
 
