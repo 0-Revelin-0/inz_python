@@ -83,12 +83,13 @@ Możliwa dalsza rozbudowa o kolejne modele akustyczne oraz funkcje DSP.
 
 ---
 
-## Windows executable
+## Wersja wykonywalna (Windows)
 
-A compiled Windows executable of the application is available in the **Releases** section of this repository.
+Skompilowana wersja aplikacji dla systemu Windows (.exe) jest dostępna w sekcji **Releases** tego repozytorium:
 
 👉 https://github.com/0-Revelin-0/inz_python/releases
 
-The executable was built using **PyInstaller** and does not require a local Python installation.
-Simply download the `.exe` file and run the application on a Windows system.
+Plik wykonywalny został wygenerowany z użyciem narzędzia **PyInstaller** i nie wymaga zainstalowanego środowiska Python.
+Wystarczy pobrać plik `.exe` i uruchomić aplikację w systemie Windows.
+
 
