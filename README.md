@@ -80,3 +80,15 @@ z naciskiem na zastosowania **edukacyjne, badawcze i inżynierskie**.
 ## 🚀 Status
 Projekt rozwijany w ramach pracy inżynierskiej.  
 Możliwa dalsza rozbudowa o kolejne modele akustyczne oraz funkcje DSP.
+
+---
+
+## Windows executable
+
+A compiled Windows executable of the application is available in the **Releases** section of this repository.
+
+👉 https://github.com/0-Revelin-0/inz_python/releases
+
+The executable was built using **PyInstaller** and does not require a local Python installation.
+Simply download the `.exe` file and run the application on a Windows system.
+
