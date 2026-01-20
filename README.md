@@ -83,6 +83,12 @@ Możliwa dalsza rozbudowa o kolejne modele akustyczne oraz funkcje DSP.
 
 ---
 
+## Wymagania środowiskowe
+
+Do uruchomienia aplikacji z kodu źródłowego wymagane jest środowisko **Python 3.10**.
+
+---
+
 ## Wersja wykonywalna (Windows)
 
 Skompilowana wersja aplikacji dla systemu Windows (.exe) jest dostępna w sekcji **Releases** tego repozytorium:
