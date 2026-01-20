@@ -99,3 +99,4 @@ Plik wykonywalny został wygenerowany z użyciem narzędzia **PyInstaller** i ni
 Wystarczy pobrać plik `.exe` i uruchomić aplikację w systemie Windows.
 
 
+
